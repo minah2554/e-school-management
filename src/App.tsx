@@ -259,6 +259,9 @@ export default function App() {
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showAddEventModal, setShowAddEventModal] = useState(false);
   const [showDraftModal, setShowDraftModal] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+
   
   // Consolidated Month Draft Selection
   const [draftMonth, setDraftMonth] = useState('5');
@@ -2344,18 +2347,201 @@ ${lates.length > 0 ? `   - 인정지각 : ${formattedLates}` : ''}
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div>
             <p className="font-extrabold text-slate-200">담임용 학생 선수 관리 원격 지원 포털</p>
-            <p className="mt-1">© 2026 Homeroom Athlete Manager. Designed with Canva Premium Aesthetic. All rights reserved.</p>
+            <p className="mt-1">© 2026 Homeroom Athlete Manager. All rights reserved.</p>
+            <p className="mt-1 text-[10px] text-slate-500 font-medium">
+              개인정보보호책임자: 홍민아 교사 (우신중학교) | 문의: 02-2610-1621 (교무실 내선)
+            </p>
           </div>
           <div className="flex items-center gap-6 font-bold">
             <a href="https://ms.e-school.or.kr/main.do" target="_blank" rel="noopener noreferrer" className="hover:text-white transition flex items-center gap-1">
               <span>e-school 바로가기</span>
               <ExternalLink className="w-3 h-3" />
             </a>
-            <span className="hover:text-white transition cursor-pointer">기안서 가이드</span>
-            <span className="hover:text-white transition cursor-pointer">개인정보 취급 지침</span>
+            <span onClick={() => setShowTermsModal(true)} className="hover:text-white transition cursor-pointer">이용약관</span>
+            <span onClick={() => setShowPrivacyModal(true)} className="hover:text-white transition cursor-pointer text-indigo-400">개인정보처리방침</span>
           </div>
         </div>
       </footer>
+
+      {/* MODAL: Terms of Service */}
+      {showTermsModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden border border-slate-200/50 flex flex-col max-h-[85vh]">
+            <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
+              <h4 className="font-extrabold text-sm flex items-center gap-2">
+                <FileText className="w-5 h-5 text-indigo-400" />
+                <span>학생선수관리 웹앱 서비스 이용약관</span>
+              </h4>
+              <button onClick={() => setShowTermsModal(false)} className="text-white/80 hover:text-white transition">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto text-xs text-slate-600 space-y-4 leading-relaxed font-sans text-left">
+              <p className="font-bold text-slate-800">본 이용약관(이하 '약관')은 학생선수관리 웹앱(이하 '본 서비스')이 제공하는 교육용 웹 애플리케이션 서비스의 이용에 관한 사항을 규정합니다.</p>
+              
+              <hr className="border-slate-100" />
+              
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제1조 (목적)</h5>
+                <p>이 약관은 개발 교사(이하 '서비스 제공자')가 제공하는 무료 교육용 웹 애플리케이션 서비스(이하 '서비스')를 이용함에 있어, 서비스 제공자와 이용자(학생, 학부모, 교사 등)의 권리, 의무 및 책임사항을 규정함을 목적으로 합니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제2조 (정의)</h5>
+                <p>1. '서비스'란 본 플랫폼에서 제공하는 학생선수 출결 현황 추적, e-school 이수시간 점검 및 나이스(NEIS) 기안문 본문 빌더를 포함한 교육용 웹 애플리케이션 일체를 말합니다.</p>
+                <p>2. '이용자'란 본 서비스에 접속하여 이 약관에 따라 서비스를 이용하는 회원(학생, 교사) 및 비회원을 말합니다.</p>
+                <p>3. '회원'이란 본 서비스에 가입하여 계정을 생성한 자로서, 서비스를 이용할 수 있는 권한을 가진 자를 말합니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제3조 (약관의 명시와 개정)</h5>
+                <p>1. 서비스 제공자는 이 약관의 내용을 이용자가 쉽게 알 수 있도록 서비스 초기 화면 또는 하단 링크에 게시합니다.</p>
+                <p>2. 서비스 제공자는 관련 법령을 위배하지 않는 범위에서 이 약관을 개정할 수 있습니다.</p>
+                <p>3. 약관을 개정할 경우에는 적용일자 및 개정사유를 명시하여 적용일 7일 이전부터 서비스 내에 공지합니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제4조 (서비스의 제공 및 요금)</h5>
+                <p>1. 본 서비스는 학교 현장의 학생선수 관리를 지원하기 위한 목적으로 개발된 <strong>무료 교육용 서비스</strong>입니다.</p>
+                <p>2. 서비스 이용과 관련하여 어떠한 유료 결제나 광고 유치가 발생하지 않으며, 상업적 목적으로 운영되지 않습니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제5조 (서비스의 중단)</h5>
+                <p>1. 서비스 제공자는 시스템 점검, 서버 교체 및 고장, 네트워크 통신 두절 등의 기술적 사유가 발생한 경우에는 서비스 제공을 일시적으로 중단할 수 있습니다.</p>
+                <p>2. 본 서비스는 공익 목적의 무료 교육용 서비스이므로, 서비스 중단이나 오류로 인한 별도의 보상이나 손해배상 책임은 제공하지 않습니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제6조 (회원가입 및 제한)</h5>
+                <p>1. 이용자는 본 서비스가 정한 가입 절차에 따라 이름, 학번, 운동 종목 등의 정보를 정확히 입력하고 이 약관에 동의함으로써 가입을 신청합니다.</p>
+                <p>2. 만 14세 미만의 아동(초등학생 및 중학생 일부)은 학기 초 배부된 학교 가정통신문 등을 통해 보호자(법정대리인)의 동의 절차를 완료한 후 본 서비스를 이용해야 합니다.</p>
+                <p>3. 타인의 이름이나 학번을 도용하여 가입을 신청한 경우, 계정이 강제 삭제되거나 서비스 이용이 차단될 수 있습니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제7조 (이용자의 의무)</h5>
+                <p>이용자는 본 서비스를 이용할 때 다음 각 호의 행위를 하여서는 안 됩니다.</p>
+                <p>1. 회원 가입 또는 정보 변경 시 허위 내용을 등록하는 행위</p>
+                <p>2. 타인의 계정 정보(아이디/비밀번호)를 무단으로 사용하여 로그인하거나 도용하는 행위</p>
+                <p>3. 서비스 내에 다른 학생의 개인정보를 동의 없이 게시하거나 불법적으로 유출하는 행위</p>
+                <p>4. 서비스의 정상적인 운영을 방해하거나 서버에 과도한 부하를 주는 행위</p>
+                <p>5. 본 서비스를 교육용 목적 이외의 상업적 용도로 사용하는 행위</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제8조 (책임 제한 및 면책)</h5>
+                <p>1. 본 서비스는 교육 지원을 위한 무료 도구로 제공되는 것이며, 서비스 제공자는 서비스의 완벽한 무결성이나 데이터의 영구 보존을 보장하지 않습니다.</p>
+                <p>2. 이용자는 중요한 학생선수 활동 내역 및 증빙 서류 사본을 본인의 기기나 서류철에 별도로 보관하는 것을 적극 권장합니다.</p>
+                <p>3. 서비스 제공자는 이용자가 서비스를 이용하는 과정에서 발생한 데이터 유실, 오동작, 또는 기안문 오작성으로 인한 행정적 불이익 등에 대해 고의나 중과실이 없는 한 책임지지 않습니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제9조 (분쟁의 해결)</h5>
+                <p>본 서비스 이용과 관련하여 제공자와 이용자 간에 발생한 분쟁에 대해서는 대한민국의 관련 법령을 적용하며, 관할 법원은 서비스 제공자(개발 교사) 소속 학교 소재지의 관할 법원(서울남부지방법원)으로 합니다.</p>
+              </div>
+
+              <hr className="border-slate-100" />
+              
+              <p className="text-slate-400 text-[10px]">이 약관은 2026년 3월 1일부터 시행됩니다.</p>
+            </div>
+            
+            <div className="bg-slate-50 px-6 py-4 flex justify-end border-t border-slate-100 shrink-0">
+              <button 
+                onClick={() => setShowTermsModal(false)}
+                className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition"
+              >
+                동의 및 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Privacy Policy */}
+      {showPrivacyModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden border border-slate-200/50 flex flex-col max-h-[85vh]">
+            <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
+              <h4 className="font-extrabold text-sm flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-indigo-400" />
+                <span>학생선수관리 웹앱 개인정보처리방침</span>
+              </h4>
+              <button onClick={() => setShowPrivacyModal(false)} className="text-white/80 hover:text-white transition">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto text-xs text-slate-600 space-y-4 leading-relaxed font-sans text-left">
+              <p className="font-bold text-slate-800">학생선수관리 웹앱(이하 '본 서비스')은 개인정보 보호법 제30조에 따라 정보주체의 개인정보를 보호하고 이와 관련한 고충을 신속하고 원활하게 처리할 수 있도록 하기 위하여 다음과 같이 개인정보 처리방침을 수립·공개합니다.</p>
+              
+              <hr className="border-slate-100" />
+              
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제1조 (개인정보의 처리 목적)</h5>
+                <p>본 서비스는 다음의 목적을 위하여 최소한의 개인정보를 처리합니다.</p>
+                <p>1. <strong>학생 회원 가입 및 관리:</strong> 학급 및 운동부 구성원 식별, 학사 결손 및 e-school 이수율 현황 확인, 담당 교사의 피드백 제공.</p>
+                <p>2. <strong>출석인정 기안문 자동 생성:</strong> 월말 출결 및 이수 데이터를 기반으로 한 나이스(NEIS) 제출용 기안문 빌드.</p>
+                <p>3. <strong>증빙서류 및 학습 이력 관리:</strong> 활동보고서, e-school 확인서 등의 수합 내역 관리.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제2조 (처리하는 개인정보 항목)</h5>
+                <p>1. <strong>수집 항목:</strong> 아이디, 비밀번호, 이름, 학년, 반, 번호, 소속 운동 종목, 결석/조퇴/지각 세부 내역 및 이수율, 제출 증빙 서류명</p>
+                <p>2. <strong>비수집 항목:</strong> 주민등록번호, 주소, 보호자 연락처 등 민감 정보</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제3조 (개인정보의 처리 및 보유기간)</h5>
+                <p>보유 기간은 해당 학년도 종료 시(익년 2월 말) 또는 회원이 직접 탈퇴를 요청할 때까지이며, 보유 목적 달성 시 지체 없이 파기합니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제4조 (만 14세 미만 아동의 개인정보 처리에 관한 사항)</h5>
+                <p>초/중학생 등 만 14세 미만 이용자는 학기 초 배부되는 학교 가정통신문(동의서)을 통해 법정대리인의 동의를 득한 뒤 서비스를 이용하여야 합니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제5조 (개인정보의 파기 절차 및 방법)</h5>
+                <p>파기 사유 발생 시 데이터베이스에서 영구 삭제(DB 영구 삭제)하여 어떠한 형태로도 재생할 수 없도록 파기합니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제6조 (개인정보의 안전성 확보조치)</h5>
+                <p>1. 이용자의 비밀번호는 <strong>단방향 해시 함수로 암호화</strong>되어 복호화가 불가능하게 저장됩니다.</p>
+                <p>2. 전 구간 <strong>HTTPS 암호화 통신</strong>을 적용해 안전하게 데이터를 송수신합니다.</p>
+                <p>3. 전문 보안 표준을 따르는 Google Firebase 및 Vercel 플랫폼을 통해 물리적으로 안전하게 데이터가 격리됩니다.</p>
+                <p>4. <strong>AI 기안문 비식별화 전송 조치:</strong> 외부 AI(Gemini) API를 사용해 기안문을 생성할 때, 학생 이름 및 학년/반 등 실 식별 정보는 임시 식별자(`[학생 성명]`, `[학년반]` 등)로 변환(비식별화)한 후 서버로 전송하며, 결과 텍스트가 사용자의 기기에 도달한 후에 브라우저 내에서 안전하게 다시 실명으로 복원합니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제7조 (권리·의무 및 행사방법)</h5>
+                <p>학생선수 및 법정대리인은 언제든지 열람, 정정, 삭제 요청이 가능하며 서비스 내 탈퇴 기능 혹은 책임 교사에게 연락해 처리할 수 있습니다.</p>
+              </div>
+
+              <div>
+                <h5 className="font-bold text-slate-800 mb-1">제8조 (개인정보 보호책임자)</h5>
+                <p>이름: 홍민아 (개발자) | 소속: 우신중학교 | 직위: 교사 | 연락처: 02-2610-1621(교무실)</p>
+              </div>
+
+              <hr className="border-slate-100" />
+              
+              <p className="text-slate-400 text-[10px]">이 개인정보 처리방침은 2026년 3월 1일부터 적용됩니다.</p>
+            </div>
+            
+            <div className="bg-slate-50 px-6 py-4 flex justify-end border-t border-slate-100 shrink-0">
+              <button 
+                onClick={() => setShowPrivacyModal(false)}
+                className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+
   );
 }
