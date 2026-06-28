@@ -13,9 +13,24 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
     }
 
-    const { prompt } = req.body || {};
+    const { prompt, fileData } = req.body || {};
     if (!prompt) {
       return res.status(400).json({ error: 'Missing prompt in request body.' });
+    }
+
+    const parts = [
+      {
+        text: prompt
+      }
+    ];
+
+    if (fileData && fileData.base64 && fileData.mimeType) {
+      parts.push({
+        inlineData: {
+          mimeType: fileData.mimeType,
+          data: fileData.base64
+        }
+      });
     }
 
     // Call Gemini 3.1 Flash Lite API using native fetch
@@ -29,11 +44,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           contents: [
             {
-              parts: [
-                {
-                  text: prompt
-                }
-              ]
+              parts: parts
             }
           ]
         })

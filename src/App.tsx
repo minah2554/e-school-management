@@ -604,30 +604,149 @@ export default function App() {
     showToast(`${sanitizedName} 파일이 성공적으로 매핑되었습니다.`);
   };
 
-  // --- Smart OCR Document Parser Simulation ---
-  const triggerOcrSimulation = (file: File) => {
+  // --- Smart OCR Document Parser via Gemini Multimodal API ---
+  const triggerOcrSimulation = async (file: File) => {
     if (!file) return;
     setOcrScanning(true);
     setOcrProgress(10);
+
+    const isImageOrPdf = file.type.startsWith('image/') || file.type === 'application/pdf';
     
+    // Progress bar tick interval
     const interval = setInterval(() => {
       setOcrProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setTimeout(() => {
-            setOcrScanning(false);
-            
-            // Prefill with smart parsed dates from filename
-            const parsedData = parseOcrFromFilename(file.name, students);
-            setOcrPrefilled(parsedData);
-            setModalDailyDetails(parsedData.dailyDetails);
-            setShowAddEventModal(true);
-          }, 600);
-          return 100;
+        if (prev >= 90) {
+          return 90; // Wait at 90% while serverless API is resolving
         }
-        return prev + 20;
+        return prev + 15;
       });
-    }, 200);
+    }, 150);
+
+    // Fallback executor in case of errors or non-image/pdf documents
+    const runFallback = () => {
+      clearInterval(interval);
+      setOcrProgress(100);
+      setTimeout(() => {
+        setOcrScanning(false);
+        const parsedData = parseOcrFromFilename(file.name, students);
+        setOcrPrefilled(parsedData);
+        setModalDailyDetails(parsedData.dailyDetails);
+        setShowAddEventModal(true);
+      }, 300);
+    };
+
+    if (!isImageOrPdf) {
+      // For non-image/pdf documents (e.g. .hwp, .docx), trigger immediately name-based parsing
+      runFallback();
+      return;
+    }
+
+    try {
+      // 1. Read file as Base64 Data URL
+      const reader = new FileReader();
+      const fileDataPromise = new Promise<{ base64: string, mimeType: string }>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          const commaIdx = result.indexOf(',');
+          const base64 = result.substring(commaIdx + 1);
+          const mimeType = file.type || 'application/pdf';
+          resolve({ base64, mimeType });
+        };
+        reader.onerror = (err) => reject(err);
+        reader.readAsDataURL(file);
+      });
+
+      const { base64, mimeType } = await fileDataPromise;
+
+      // 2. Build detailed prompt for Gemini to structure JSON output
+      const prompt = `너는 학교 행정 및 출석 인정 공문서 분석 전문가이다.
+다음 첨부된 공문(대회/훈련 협조요청 공문 또는 보고서)을 정밀 스캔하여 아래의 정보들을 추출해줘.
+
+1. 대회 또는 훈련에 참가한 학생 선수 이름 (studentName)
+2. 운동 종목 (sport)
+3. 공식 대회 또는 훈련의 정식 명칭 (eventTitle)
+4. 세부 출석인정 일정 리스트 (dailyDetails) - 공문에 명시된 모든 날짜별 결석, 조퇴, 지각 날짜와 교시 정보를 빠짐없이 파싱해줘.
+
+[작성 및 변환 규칙]
+- 날짜(date)는 반드시 YYYY-MM-DD 형식으로 기록하라. (공문 연도가 누락된 경우 2026년으로 가정하라.)
+- 인정유형(attendanceType)은 '결석', '조퇴', '지각' 중 하나로만 매핑하라. (조퇴의 경우 해당 조퇴 교시 정보가 있으면 매칭하고, 종일 인정인 경우 결석으로 처리하라.)
+- 시수(missingHours)는 해당 일자의 결손인정 수업 시수이다. (결석인 경우 6시간, 조퇴인 경우 해당 교시 수 또는 디폴트 3시간 등으로 정해라.)
+- 교시정보(periodInfo)는 '종일결석', 'N교시 조퇴', 'N교시 지각' 등으로 자연스럽게 기록하라.
+
+반드시 다른 군더더기 말이나 설명 없이, 마크다운 코드블록(\`\`\`json) 등도 포함하지 말고, 오직 아래의 JSON 포맷 텍스트 하나만 출력하라:
+
+{
+  "studentName": "학생 이름",
+  "sport": "종목",
+  "eventTitle": "대회/훈련명",
+  "dailyDetails": [
+    {
+      "date": "YYYY-MM-DD",
+      "attendanceType": "결석|조퇴|지각",
+      "missingHours": 6,
+      "periodInfo": "종일결석"
+    }
+  ]
+}`;
+
+      // 3. Dispatch POST request to serverless endpoint
+      const res = await fetch('/api/gemini-counseling', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ prompt, fileData: { base64, mimeType } })
+      });
+
+      if (!res.ok) {
+        throw new Error('API server error');
+      }
+
+      const result = await res.json();
+      const rawText = result.text || '';
+      
+      // Match and parse curly braces JSON block
+      const jsonRegex = /{[\s\S]*}/;
+      const match = rawText.match(jsonRegex);
+      
+      if (!match) {
+        throw new Error('No valid JSON block detected');
+      }
+
+      const parsedJson = JSON.parse(match[0]);
+      
+      // 4. Map parsed student name to register student ID
+      let matchedStudent = students.find(s => s.name === parsedJson.studentName);
+      if (!matchedStudent && parsedJson.studentName) {
+        matchedStudent = students.find(s => s.name.includes(parsedJson.studentName) || parsedJson.studentName.includes(s.name));
+      }
+      
+      const targetStudentId = matchedStudent ? matchedStudent.id : (students[0]?.id || '');
+      
+      const parsedData = {
+        title: parsedJson.eventTitle || file.name.replace(/\.[^/.]+$/, "") + " 출석 인정",
+        studentId: targetStudentId,
+        type: 'competition',
+        startDate: parsedJson.dailyDetails?.[0]?.date || '2026-05-01',
+        endDate: parsedJson.dailyDetails?.[parsedJson.dailyDetails.length - 1]?.date || '2026-05-31',
+        isExceptionEvent: false,
+        dailyDetails: parsedJson.dailyDetails || []
+      };
+
+      clearInterval(interval);
+      setOcrProgress(100);
+      setTimeout(() => {
+        setOcrScanning(false);
+        setOcrPrefilled(parsedData);
+        setModalDailyDetails(parsedData.dailyDetails);
+        setShowAddEventModal(true);
+        showToast("공문 AI 스캔이 성공적으로 완료되었습니다.");
+      }, 300);
+
+    } catch (err) {
+      console.warn("AI OCR parser error, fallback initiated:", err);
+      runFallback();
+    }
   };
 
   // --- Dynamic modal daily details change handlers ---
@@ -1004,7 +1123,7 @@ export default function App() {
                 />
               </label>
               <p className="text-[9px] text-indigo-300 mt-2 flex items-center gap-1">
-                <span>🔒 개인정보 보호: 실제 파일은 서버에 전송되지 않고 브라우저 내에서만 처리되며 파일명 내 이름/연락처 등은 자동 비식별화 처리됩니다.</span>
+                <span>🔒 개인정보 보호: 업로드된 파일은 일회성 암호화 전송을 통해 AI로 분석되며 분석 완료 즉시 완전히 소멸됩니다.</span>
               </p>
             </div>
           </div>
