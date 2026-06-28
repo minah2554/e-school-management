@@ -728,14 +728,68 @@ export default function App() {
       
       const targetStudentId = matchedStudent ? matchedStudent.id : (students[0]?.id || '');
       
+      // 5. Sanitize and Correct dailyDetails (Preventing 0-hour or 0-period errors)
+      const sanitizedDetails = (parsedJson.dailyDetails || []).map((day: any) => {
+        const dateStr = day.date || '2026-05-01';
+        const d = new Date(dateStr);
+        const dayOfWeek = d.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+        
+        // Standard missing hours per weekday (Mon/Wed/Fri = 6, Tue/Thu = 7, Sat/Sun = 0)
+        let totalHours = 6;
+        if (dayOfWeek === 2 || dayOfWeek === 4) {
+          totalHours = 7;
+        } else if (dayOfWeek === 0 || dayOfWeek === 6) {
+          totalHours = 0;
+        }
+
+        let type = day.attendanceType || '조퇴';
+        if (type !== '결석' && type !== '조퇴' && type !== '지각') {
+          type = '조퇴';
+        }
+
+        let hours = Number(day.missingHours);
+        if (isNaN(hours) || hours <= 0) {
+          hours = type === '결석' ? totalHours : (totalHours > 0 ? 3 : 0);
+        }
+
+        if (type === '결석') {
+          hours = totalHours;
+        }
+
+        let info = day.periodInfo || '';
+        if (type === '결석') {
+          info = '종일결석';
+        } else if (type === '지각') {
+          info = '1교시 지각';
+        } else {
+          // If type is 조퇴 and periodInfo is empty or contains '0교시' or 'undefined'
+          if (!info || info.includes('0교시') || info.includes('undefined')) {
+            if (totalHours > 0) {
+              const startPeriod = totalHours - hours + 1;
+              info = `${startPeriod}교시 조퇴`;
+            } else {
+              info = '조퇴';
+            }
+          }
+        }
+
+        return {
+          date: dateStr,
+          attendanceType: type,
+          missingHours: hours,
+          eschoolHours: calculateEschoolHours(hours),
+          periodInfo: info
+        };
+      });
+
       const parsedData = {
         title: parsedJson.eventTitle || file.name.replace(/\.[^/.]+$/, "") + " 출석 인정",
         studentId: targetStudentId,
         type: 'competition',
-        startDate: parsedJson.dailyDetails?.[0]?.date || '2026-05-01',
-        endDate: parsedJson.dailyDetails?.[parsedJson.dailyDetails.length - 1]?.date || '2026-05-31',
+        startDate: sanitizedDetails[0]?.date || '2026-05-01',
+        endDate: sanitizedDetails[sanitizedDetails.length - 1]?.date || '2026-05-31',
         isExceptionEvent: false,
-        dailyDetails: parsedJson.dailyDetails || []
+        dailyDetails: sanitizedDetails
       };
 
       clearInterval(interval);
@@ -2224,27 +2278,23 @@ export default function App() {
               const earlyOuts = dateDetails.filter(d => d.attendanceType === '조퇴');
               const lates = dateDetails.filter(d => d.attendanceType === '지각');
 
-              // Format dates string for early outs
-              const formattedEarlyOuts = earlyOuts.map(d => {
+              // Format all dates in a single integrated chronological list
+              const formattedAbsences = dateDetails.map(d => {
                 const dateObj = new Date(d.date);
                 const month = dateObj.getMonth() + 1;
                 const day = dateObj.getDate();
-                return `${month}/${day}(${d.periodInfo || `${d.missingHours}교시`})`;
-              }).join(', ');
-
-              const formattedLeaves = leaves.map(d => {
-                const dateObj = new Date(d.date);
-                const month = dateObj.getMonth() + 1;
-                const day = dateObj.getDate();
-                return `${month}/${day}(인정결석)`;
-              }).join(', ');
-
-              const formattedLates = lates.map(d => {
-                const dateObj = new Date(d.date);
-                const month = dateObj.getMonth() + 1;
-                const day = dateObj.getDate();
-                return `${month}/${day}(인정지각)`;
-              }).join(', ');
+                
+                let detailLabel = '';
+                if (d.attendanceType === '결석') {
+                  detailLabel = '인정결석';
+                } else if (d.attendanceType === '지각') {
+                  detailLabel = '인정지각';
+                } else {
+                  detailLabel = d.periodInfo || `${d.missingHours}교시 조퇴`;
+                }
+                
+                return `   - ${month}/${day} : ${detailLabel}`;
+              }).join('\n');
 
               const titleEvent = dateDetails[0]?.eventTitle || '학생선수 평일 연습 경기 및 리그 평일 경기 참가';
               const maskedName = maskStudentName(studentDetail.name);
@@ -2253,10 +2303,8 @@ export default function App() {
 「${studentDetail.sport} 선수로 등록되어 활동 중인 학생의 ${draftMonth}월 출석을 다음과 같이 인정하고자 합니다.」
 
 1. 대상 : ${studentDetail.gradeClass} ${studentDetail.number}번 ${maskedName}
-2. 인정기간 :
-${earlyOuts.length > 0 ? `   - 인정조퇴 : ${formattedEarlyOuts}` : ''}
-${leaves.length > 0 ? `   - 인정결석 : ${formattedLeaves}` : ''}
-${lates.length > 0 ? `   - 인정지각 : ${formattedLates}` : ''}
+2. 인정기간 및 내역 :
+${formattedAbsences || '   - 결손 내역 없음'}
 3. 사유 : ${titleEvent}
 4. 증빙서류 : 학생선수 활동 보고서, e-school 학습확인서 등
 
