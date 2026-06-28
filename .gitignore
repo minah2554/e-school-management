@@ -23,3 +23,7 @@ dist
 *.njsproj
 *.sln
 *.sw?
+
+# Firebase cache
+.firebase/
+
