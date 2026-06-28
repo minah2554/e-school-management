@@ -85,6 +85,19 @@ const getDefaultPeriodInfoForDate = (dateStr: string, attendanceType: string, mi
   return `${missingHours}교시 ${attendanceType}`;
 };
 
+// --- Student Name Anonymization Helper ---
+const maskStudentName = (name: string): string => {
+  if (!name) return '';
+  if (name.length <= 1) return name;
+  if (name.length === 2) {
+    return name[0] + 'O';
+  }
+  const first = name[0];
+  const last = name[name.length - 1];
+  const middleLen = name.length - 2;
+  return first + 'O'.repeat(middleLen) + last;
+};
+
 // e-school hours: 1~2 hours -> 1 hour, 3+ hours -> 2 hours (Max 2 hours/day)
 const calculateEschoolHours = (hours: number) => {
   const num = Number(hours);
@@ -282,14 +295,6 @@ export default function App() {
   // Dynamic daily details inside schedule creator
   const [modalDailyDetails, setModalDailyDetails] = useState<any[]>([]);
 
-  // AI Draft Generator State
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResponse, setAiResponse] = useState('');
-
-  // Clear AI response when student or month changes
-  useEffect(() => {
-    setAiResponse('');
-  }, [draftStudentId, draftMonth]);
 
   // --- Firebase Auth & Load ---
   useEffect(() => {
@@ -775,80 +780,6 @@ export default function App() {
     setModalDailyDetails(updated);
   };
 
-  // --- AI Draft Generation via serverless /api/gemini-counseling ---
-  const handleGenerateAiDraft = async (data: any) => {
-    if (!data || data.details.length === 0) {
-      showToast("선택된 학생과 월에 해당하는 결손 일정이 없습니다.", "error");
-      return;
-    }
-
-    const leaves = data.details.filter((d: any) => d.attendanceType === '결석');
-    const earlyOuts = data.details.filter((d: any) => d.attendanceType === '조퇴');
-    const lates = data.details.filter((d: any) => d.attendanceType === '지각');
-
-    const anonymizedSport = "[종목]";
-    const anonymizedName = "[학생 성명]";
-    const anonymizedGradeClass = "[학년반]";
-    const anonymizedNumber = "[출석부 번호]";
-    
-    const eventTitle = data.details[0]?.eventTitle || '학생선수 평일 연습 경기 및 리그 평일 경기 참가';
-
-    const prompt = `너는 학교 행정 업무 및 나이스(NEIS) 기안 공문 작성 전문가이다.
-다음 학생선수 학사 결손 및 e-school 이수 통계 데이터를 기반으로 공식적이고 격식 있는 출석인정 결재 기안문 본문을 작성해줘.
-
-[데이터 및 조건]
-- 대상 학생 정보: ${anonymizedGradeClass} ${anonymizedNumber} ${anonymizedName} (종목: ${anonymizedSport})
-- 대상 월: ${draftMonth}월
-- 결손 인정기간 및 세부 내역:
-  * 인정 조퇴: ${earlyOuts.map((d: any) => `${d.date} (${d.periodInfo || '조퇴'})`).join(', ') || '없음'}
-  * 인정 결석: ${leaves.map((d: any) => `${d.date} (인정결석)`).join(', ') || '없음'}
-  * 인정 지각: ${lates.map((d: any) => `${d.date} (인정지각)`).join(', ') || '없음'}
-- e-school 학습 이수 필수 요건: 총 ${data.totalEschoolHours}시간 이수 확인됨.
-- 대표 사유: ${eventTitle}
-
-[공문 작성 지침]
-1. 정중하고 공식적인 기안 공문 형식을 준수하라.
-2. 개인정보 보호를 위해 기안문 내용에서 학생 이름은 반드시 "[학생 성명]", 학반 번호는 "[학년반]" 또는 "[출석부 번호]"로 치환하여 작성하라.
-3. 사유, 인정기간, 증빙서류 수합 여부(활동보고서, 이수확인서 등)가 항목별로 명확하게 번호를 매겨 구분되도록 구조화하라.
-4. 나이스 본문에 바로 복사해 쓸 수 있도록 불필요한 서론/결론 코멘트나 설명 없이 기안문 본문 텍스트만 출력하라.`;
-
-    setAiLoading(true);
-    setAiResponse('');
-    try {
-      const res = await fetch('/api/gemini-counseling', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ prompt })
-      });
-
-      const result = await res.json();
-      if (res.ok) {
-        let text = result.text || '';
-        
-        // Client-side restoration of anonymized fields
-        const namePlaceholder = /\[학생\s*성명\]/gi;
-        const gradeClassPlaceholder = /\[학년반\]/gi;
-        const numberPlaceholder = /\[출석부\s*번호\]/gi;
-        const sportPlaceholder = /\[종목\]/gi;
-
-        text = text.replace(namePlaceholder, data.student.name);
-        text = text.replace(gradeClassPlaceholder, data.student.gradeClass);
-        text = text.replace(numberPlaceholder, data.student.number + '번');
-        text = text.replace(sportPlaceholder, data.student.sport);
-
-        setAiResponse(text);
-        showToast("AI 기안문 작성이 완료되었습니다.");
-      } else {
-        showToast(result.error || "AI 기안문 생성 중 오류가 발생했습니다.", "error");
-      }
-    } catch (err: any) {
-      showToast("서버 연결 실패: " + err.message, "error");
-    } finally {
-      setAiLoading(false);
-    }
-  };
 
   // --- Helper Calendars Calculation ---
   const getDaysInMonth = (date: Date) => {
@@ -1906,87 +1837,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* AI Draft Generator Panel */}
-              <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-lg space-y-4">
-                <div className="flex items-center gap-2">
-                  <div className="bg-purple-100 text-purple-700 p-2 rounded-xl">
-                    <Sparkles className="w-5 h-5 text-purple-600" />
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold text-sm text-slate-900">✨ AI 기안문 작성 도우미 (Gemini)</h4>
-                    <p className="text-[10px] text-slate-400">Gemini 3.1 Flash Lite 기반 공문 자동 기안</p>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-200/60 space-y-1.5 font-medium">
-                  <p className="font-bold text-slate-700 flex items-center gap-1">
-                    <span>🔒 개인정보 보호 비식별화 적용</span>
-                  </p>
-                  <p>이름, 학년반 등 민감한 개인정보는 임시 식별자(`[학생 성명]`, `[학년반]`)로 변환되어 안전하게 처리되며, 생성 완료 후 브라우저(로컬)에서 자동으로 다시 복구됩니다.</p>
-                </div>
-
-                {(() => {
-                  const data = getMonthlyAggregatedData(draftStudentId, draftMonth);
-                  if (!data || data.details.length === 0) {
-                    return (
-                      <div className="text-center py-6 text-slate-400 text-xs font-bold bg-slate-50 rounded-xl border border-dashed border-slate-200 leading-relaxed">
-                        선택한 월({draftMonth}월)에 등록된 일정이 없어<br />AI 기안문을 생성할 수 없습니다.
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="space-y-3">
-                      <button
-                        type="button"
-                        onClick={() => handleGenerateAiDraft(data)}
-                        disabled={aiLoading}
-                        className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold text-xs py-3 rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 disabled:opacity-50"
-                      >
-                        {aiLoading ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>AI 기안문 생성 중...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-4 h-4 text-yellow-300" />
-                            <span>AI 기안문 자동 생성</span>
-                          </>
-                        )}
-                      </button>
-
-                      {aiResponse && (
-                        <div className="space-y-2 pt-2 border-t border-slate-100 animate-in fade-in duration-200">
-                          <span className="text-[10px] text-slate-400 font-black block">AI 생성 기안문 본문:</span>
-                          <textarea
-                            readOnly
-                            rows={12}
-                            className="w-full border border-slate-300 rounded-xl p-3.5 text-xs font-mono leading-relaxed bg-slate-50 focus:ring-0 focus:border-slate-300 text-slate-800"
-                            value={aiResponse}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const tempEl = document.createElement('textarea');
-                              tempEl.value = aiResponse;
-                              document.body.appendChild(tempEl);
-                              tempEl.select();
-                              document.execCommand('copy');
-                              document.body.removeChild(tempEl);
-                              showToast("AI 기안문이 클립보드에 복사되었습니다!");
-                            }}
-                            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-xs py-2 rounded-xl transition flex items-center justify-center gap-1.5"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>AI 기안문 복사</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
 
             </div>
           </div>
@@ -2397,12 +2247,12 @@ export default function App() {
               }).join(', ');
 
               const titleEvent = dateDetails[0]?.eventTitle || '학생선수 평일 연습 경기 및 리그 평일 경기 참가';
-
-              const draftText = `제목  학생 선수 ${draftMonth}월 출석 인정(${studentDetail.gradeClass} ${studentDetail.number}번 ${studentDetail.name})
+              const maskedName = maskStudentName(studentDetail.name);
+              const draftText = `제목  학생 선수 ${draftMonth}월 출석 인정(${studentDetail.gradeClass} ${studentDetail.number}번 ${maskedName})
 
 「${studentDetail.sport} 선수로 등록되어 활동 중인 학생의 ${draftMonth}월 출석을 다음과 같이 인정하고자 합니다.」
 
-1. 대상 : ${studentDetail.gradeClass} ${studentDetail.number}번 ${studentDetail.name}
+1. 대상 : ${studentDetail.gradeClass} ${studentDetail.number}번 ${maskedName}
 2. 인정기간 :
 ${earlyOuts.length > 0 ? `   - 인정조퇴 : ${formattedEarlyOuts}` : ''}
 ${leaves.length > 0 ? `   - 인정결석 : ${formattedLeaves}` : ''}
