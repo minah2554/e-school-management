@@ -628,15 +628,29 @@ export default function App() {
     }, 150);
 
     // Fallback executor in case of errors or non-image/pdf documents
-    const runFallback = () => {
+    const runFallback = async () => {
       clearInterval(interval);
       setOcrProgress(100);
-      setTimeout(() => {
+      
+      const parsedData = parseOcrFromFilename(file.name, students);
+      const prefilledData = {
+        ...parsedData,
+        files: {
+          document: file.name,
+          report: '',
+          cert: ''
+        },
+        checklist: {
+          neisInput: true,
+          eschoolAssigned: false,
+          reportSubmitted: false,
+          certSubmitted: false
+        }
+      };
+
+      setTimeout(async () => {
         setOcrScanning(false);
-        const parsedData = parseOcrFromFilename(file.name, students);
-        setOcrPrefilled(parsedData);
-        setModalDailyDetails(parsedData.dailyDetails);
-        setShowAddEventModal(true);
+        await handleAddEvent(prefilledData);
       }, 300);
     };
 
@@ -748,28 +762,40 @@ export default function App() {
         }
 
         let hours = Number(day.missingHours);
-        if (isNaN(hours) || hours <= 0) {
-          hours = type === '결석' ? totalHours : (totalHours > 0 ? 3 : 0);
-        }
+        let info = day.periodInfo || '';
 
         if (type === '결석') {
           hours = totalHours;
-        }
-
-        let info = day.periodInfo || '';
-        if (type === '결석') {
           info = '종일결석';
         } else if (type === '지각') {
+          hours = 1;
           info = '1교시 지각';
         } else {
-          // If type is 조퇴 and periodInfo is empty or contains '0교시' or 'undefined'
-          if (!info || info.includes('0교시') || info.includes('undefined')) {
-            if (totalHours > 0) {
-              const startPeriod = totalHours - hours + 1;
-              info = `${startPeriod}교시 조퇴`;
-            } else {
-              info = '조퇴';
+          // 조퇴인 경우
+          // 1. periodInfo에서 조퇴 교시 숫자(P) 추출 시도
+          let matchedPeriod = 0;
+          const matchResult = info.match(/(\d+)교시/);
+          if (matchResult) {
+            matchedPeriod = parseInt(matchResult[1], 10);
+          }
+
+          if (matchedPeriod > 0 && totalHours > 0) {
+            // 조퇴 교시가 명시된 경우 결손 시수 = 총수업시수 - 조퇴교시
+            hours = totalHours - matchedPeriod;
+            if (hours <= 0) hours = 1; // 최소 1시간
+          } else {
+            // 조퇴 교시가 없고 missingHours만 제공된 경우
+            if (isNaN(hours) || hours <= 0) {
+              hours = 1; // 기본 1시간 결손
             }
+          }
+
+          // 2. 조퇴 교시(P) 라벨링 보정
+          const targetPeriod = totalHours - hours;
+          if (totalHours > 0 && targetPeriod > 0) {
+            info = `${targetPeriod}교시 조퇴`;
+          } else {
+            info = info || '조퇴';
           }
         }
 
@@ -789,17 +815,26 @@ export default function App() {
         startDate: sanitizedDetails[0]?.date || '2026-05-01',
         endDate: sanitizedDetails[sanitizedDetails.length - 1]?.date || '2026-05-31',
         isExceptionEvent: false,
-        dailyDetails: sanitizedDetails
+        dailyDetails: sanitizedDetails,
+        files: {
+          document: file.name,
+          report: '',
+          cert: ''
+        },
+        checklist: {
+          neisInput: true,
+          eschoolAssigned: false,
+          reportSubmitted: false,
+          certSubmitted: false
+        }
       };
 
       clearInterval(interval);
       setOcrProgress(100);
-      setTimeout(() => {
+      setTimeout(async () => {
         setOcrScanning(false);
-        setOcrPrefilled(parsedData);
-        setModalDailyDetails(parsedData.dailyDetails);
-        setShowAddEventModal(true);
-        showToast("공문 AI 스캔이 성공적으로 완료되었습니다.");
+        // Automatically save the event into database/local storage (skip opening modal)
+        await handleAddEvent(parsedData);
       }, 300);
 
     } catch (err) {
