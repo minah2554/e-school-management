@@ -149,6 +149,72 @@ const cleanEventTitle = (fileName: string): string => {
   return title || "대회/훈련 참가";
 };
 
+// --- Robust JSON extraction helper from LLM response ---
+const extractJsonFromText = (text: string): any => {
+  if (!text) throw new Error("AI 응답이 빈 데이터입니다.");
+  
+  // strip single-line and multi-line comments
+  const cleanComments = (str: string) => {
+    return str
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(?:^|[^:])\/\/.*$/gm, '');
+  };
+
+  // Try to find content between ```json and ```
+  const mdMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
+  if (mdMatch && mdMatch[1]) {
+    try {
+      return JSON.parse(cleanComments(mdMatch[1]));
+    } catch (e) {}
+  }
+  
+  // Try to find content between ``` and ```
+  const codeMatch = text.match(/```\s*([\s\S]*?)\s*```/);
+  if (codeMatch && codeMatch[1]) {
+    try {
+      return JSON.parse(cleanComments(codeMatch[1]));
+    } catch (e) {}
+  }
+  
+  // Fallback to finding first { and last }
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const jsonCandidate = text.substring(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(cleanComments(jsonCandidate));
+    } catch (e) {}
+  }
+  
+  throw new Error("올바른 JSON 구조를 찾을 수 없습니다.");
+};
+
+// --- Robust date parsing helper to ensure standard YYYY-MM-DD format ---
+const parseToStandardDate = (dateStr: string): string => {
+  if (!dateStr) return '2026-05-01';
+  let clean = dateStr.replace(/\s+/g, '');
+  
+  // YYYY년MM월DD일 또는 MM월DD일
+  const koMatch = clean.match(/(?:(\d{4})년)?(\d{1,2})월(\d{1,2})일/);
+  if (koMatch) {
+    const y = koMatch[1] || '2026';
+    const m = koMatch[2].padStart(2, '0');
+    const d = koMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  
+  // YYYY-MM-DD 또는 MM-DD
+  const dashMatch = clean.match(/(?:(\d{4})[-/])?(\d{1,2})[-/](\d{1,2})/);
+  if (dashMatch) {
+    const y = dashMatch[1] || '2026';
+    const m = dashMatch[2].padStart(2, '0');
+    const d = dashMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  
+  return dateStr;
+};
+
 // --- Smart OCR Document Parser Simulation ---
 const parseOcrFromFilename = (fileName: string, students: any[]): any => {
   let year = 2026; // Default to 2026 as per user mock data
@@ -951,12 +1017,12 @@ export default function App() {
 
 1. 대회 또는 훈련에 참가한 학생 선수 이름 (studentName)
 2. 운동 종목 (sport)
-3. 공식 대회 또는 훈련의 정식 명칭 (eventTitle) - 불필요한 행정 용어(협조 요청, 건, 시간 할애 등)를 제외하고, "[몇월] [핵심 사유/대회명]" 형태로 직관적이고 깔끔하게 요약해라 (예: '7월 평일 훈련', '5월 평일 연습 경기 및 중등리그 참가').
+3. 공식 대회 또는 훈련의 정식 명칭 (eventTitle) - 불필요한 행정 용어(협조 요청, 건, 시간 할애 등)와 학생 이름(김현우, 김진우 등 모든 학생 성명/개인정보)을 완전히 제외하고, "[X월] [소속/상대팀/대회명/목적] [훈련/경기/참가]" 형태로 개인정보 없이 아주 간단하고 짧게 요약해라 (예: '6월 천안시티 진학 경기', '7월 평일 훈련', '5월 평일 연습 경기 및 중등리그 참가'). 성명 등의 개인정보는 절대 사유 명칭에 포함하지 말 것.
 4. 사유 및 일정 구분 명칭 (eventTypeLabel) - 공문 내용에 나타난 구체적인 참가 사유(예: "평일 연습 경기 및 중등리그 참가", "상시 훈련 참가", "전국소년체육대회 참가", "전국체전 선발전 참가" 등)를 한줄로 추출해라.
 5. 세부 출석인정 일정 리스트 (dailyDetails) - 공문에 명시된 모든 날짜별 결석, 조퇴, 지각 날짜와 교시 정보를 빠짐없이 파싱해줘.
 
 [작성 및 변환 규칙]
-- 날짜(date)는 반드시 YYYY-MM-DD 형식으로 기록하라. (공문 연도가 누락된 경우 2026년으로 가정하라.)
+- 날짜(date)는 반드시 YYYY-MM-DD 형식으로 기록하라. (공문 연도가 누락된 경우 2026년으로 가정하라. 예: '6월 29일' -> '2026-06-29')
 - 인정유형(attendanceType)은 '결석', '조퇴', '지각' 중 하나로만 매핑하라. (조퇴의 경우 해당 조퇴 교시 정보가 있으면 매칭하고, 종일 인정인 경우 결석으로 처리하라.)
 - 시수(missingHours)는 해당 일자의 결손인정 수업 시수이다. (결석인 경우 6시간, 조퇴인 경우 해당 교시 수 또는 디폴트 3시간 등으로 정해라.)
 - 교시정보(periodInfo)는 '종일결석', 'N교시 조퇴', 'N교시 지각' 등으로 자연스럽게 기록하라.
@@ -994,15 +1060,7 @@ export default function App() {
       const result = await res.json();
       const rawText = result.text || '';
       
-      // Match and parse curly braces JSON block
-      const jsonRegex = /{[\s\S]*}/;
-      const match = rawText.match(jsonRegex);
-      
-      if (!match) {
-        throw new Error('No valid JSON block detected');
-      }
-
-      const parsedJson = JSON.parse(match[0]);
+      const parsedJson = extractJsonFromText(rawText);
       
       // Assign targetType directly to the parsed label
       let targetType = '평일 연습 경기 및 중등리그 참가';
@@ -1020,7 +1078,7 @@ export default function App() {
       
       // 5. Sanitize and Correct dailyDetails (Preventing 0-hour or 0-period errors)
       const sanitizedDetails = (parsedJson.dailyDetails || []).map((day: any) => {
-        const dateStr = day.date || '2026-05-01';
+        const dateStr = parseToStandardDate(day.date);
         const d = new Date(dateStr);
         const dayOfWeek = d.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
         
@@ -2712,18 +2770,26 @@ export default function App() {
                   <input 
                     type="text"
                     name="type" 
-                    list="eventTypeHistory"
                     required 
                     value={modalType}
                     onChange={(e) => setModalType(e.target.value)}
                     placeholder="예: 평일 연습 경기 및 중등리그 참가"
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:ring-2 focus:ring-indigo-500"
                   />
-                  <datalist id="eventTypeHistory">
-                    {eventTypeHistory.map((label, idx) => (
-                      <option key={idx} value={label} />
-                    ))}
-                  </datalist>
+                  {eventTypeHistory.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                      {eventTypeHistory.slice(0, 5).map((hist, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setModalType(hist)}
+                          className="text-[9px] font-black bg-slate-100 hover:bg-indigo-50 hover:text-indigo-650 text-slate-600 border border-slate-200 hover:border-indigo-200 px-2.5 py-0.5 rounded transition cursor-pointer"
+                        >
+                          {hist}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2807,42 +2873,43 @@ export default function App() {
                       <X className="w-4 h-4" />
                     </button>
 
-                    <div className="grid grid-cols-3 gap-2 items-end">
-                      <div>
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-4">
                         <label className="text-[10px] text-slate-400 font-black block mb-0.5">날짜</label>
                         <input 
                           type="date" 
                           value={day.date}
                           onChange={(e) => handleModalDailyDetailChange(index, 'date', e.target.value)}
-                          className="w-full border border-slate-300 rounded-lg p-1 text-[11px] font-bold bg-white"
+                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs font-bold bg-white"
                         />
                       </div>
-                      <div>
+                      <div className="col-span-3">
                         <label className="text-[10px] text-slate-400 font-black block mb-0.5">일정 구분</label>
                         <select 
                           value={day.attendanceType} 
                           onChange={(e) => handleModalDailyDetailChange(index, 'attendanceType', e.target.value)}
-                          className="w-full border border-slate-300 rounded-lg p-1 text-[11px] bg-white font-bold"
+                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs bg-white font-bold"
                         >
                           <option value="조퇴">인정 조퇴</option>
                           <option value="결석">인정 결석</option>
                           <option value="지각">인정 지각</option>
                         </select>
                       </div>
-                      <div className="flex gap-1.5 items-end justify-between">
-                        <div className="flex-1">
-                          <label className="text-[10px] text-slate-400 font-black block mb-0.5">결손시수</label>
-                          <input 
-                            type="number" 
-                            min="0" 
-                            max="7" 
-                            value={day.missingHours}
-                            onChange={(e) => handleModalDailyDetailChange(index, 'missingHours', Number(e.target.value))}
-                            className="w-full border border-slate-300 rounded-lg p-1 text-[11px] font-bold"
-                          />
-                        </div>
-                        <div className="text-[10px] text-indigo-800 font-black bg-indigo-100/70 border border-indigo-350 px-2.5 py-1.5 rounded-lg flex-shrink-0 self-center shadow-sm">
-                          e-school: {day.eschoolHours}시간
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-slate-400 font-black block mb-0.5">결손시수</label>
+                        <input 
+                          type="number" 
+                          min="0" 
+                          max="7" 
+                          value={day.missingHours}
+                          onChange={(e) => handleModalDailyDetailChange(index, 'missingHours', Number(e.target.value))}
+                          className="w-full border border-slate-300 rounded-lg p-1.5 text-xs font-bold text-center bg-white"
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <label className="text-[10px] text-slate-400 font-black block mb-0.5">배정 시수</label>
+                        <div className="w-full text-xs text-indigo-900 font-black bg-indigo-50 border border-indigo-200 px-2 py-1.5 rounded-lg text-center shadow-sm flex items-center justify-center min-h-[34px] leading-none">
+                          e스쿨: <span className="text-[13px] text-indigo-700 font-black ml-1 underline decoration-indigo-300 decoration-2">{day.eschoolHours}시간</span>
                         </div>
                       </div>
                     </div>
