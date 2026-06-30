@@ -1485,8 +1485,8 @@ export default function App() {
                             {dayNum}
                           </span>
 
-                          <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-none mt-1 w-full">
-                            {dayEvents.map(evt => {
+                          <div className="flex-1 overflow-y-auto space-y-1 scrollbar-none mt-1 w-full">
+                            {dayEvents.slice(0, 2).map((evt: any) => {
                               const student = students.find(s => s.id === evt.studentId);
                               const dayDetail = evt.dailyDetails?.find((d: any) => d.date === dateStr);
                               if (!dayDetail) return null;
@@ -1494,24 +1494,20 @@ export default function App() {
                               return (
                                 <div 
                                   key={evt.id} 
-                                  className="bg-rose-50/40 border-l-4 border-rose-500 border-t border-r border-b border-slate-200/60 p-1 rounded flex flex-col gap-0.5 shadow-sm"
+                                  className="bg-rose-50 text-rose-700 border border-rose-200 px-1 py-0.5 rounded text-[8.5px] font-black truncate w-full flex items-center justify-between gap-1 leading-none shadow-sm"
                                 >
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="font-bold text-[9px] text-slate-800 truncate">
-                                      {student ? maskStudentName(student.name) : '학생'}
-                                    </span>
-                                    <span className="text-[9px] font-black text-rose-600 bg-rose-100/80 px-1 py-0.2 rounded flex-shrink-0">
-                                      {dayDetail.missingHours}h
-                                    </span>
-                                  </div>
-                                  {dayDetail.eschoolHours > 0 && (
-                                    <span className="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-150 px-1 py-0.2 rounded font-black text-center block leading-none">
-                                      e스쿨 {dayDetail.eschoolHours}h
-                                    </span>
-                                  )}
+                                  <span className="truncate shrink-0 max-w-[65%]">{student ? maskStudentName(student.name) : '학생'}</span>
+                                  <span className="text-rose-600 bg-white/70 px-0.5 rounded text-[8px] font-black">
+                                    {dayDetail.missingHours}h{dayDetail.eschoolHours > 0 ? `(e:${dayDetail.eschoolHours})` : ''}
+                                  </span>
                                 </div>
                               );
                             })}
+                            {dayEvents.length > 2 && (
+                              <div className="text-[8px] font-black text-indigo-700 bg-indigo-50 border border-indigo-150 px-1 py-0.5 rounded text-center leading-none">
+                                +{dayEvents.length - 2}건 더보기
+                              </div>
+                            )}
                           </div>
                         </button>
                       );
