@@ -38,7 +38,7 @@ if (typeof __firebase_config !== 'undefined' && __firebase_config) {
 }
 
 // --- Privacy Protection Helper to Sanitize Filenames ---
-const sanitizeFileName = (fileName: string, studentName: string): string => {
+const sanitizeFileName = (fileName: string, studentsList: any[]): string => {
   if (!fileName) return '';
   let name = fileName;
   
@@ -55,11 +55,16 @@ const sanitizeFileName = (fileName: string, studentName: string): string => {
   });
 
   // 3. Mask student's name if it appears in the filename: e.g., 김진우 -> 김*우, 이지아 -> 이*아
-  if (studentName && studentName.length >= 2) {
-    const masked = studentName[0] + '*'.repeat(studentName.length - 2) + studentName[studentName.length - 1];
-    const escapedStudentName = studentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-    const regex = new RegExp(escapedStudentName, 'g');
-    name = name.replace(regex, masked);
+  if (studentsList && Array.isArray(studentsList)) {
+    studentsList.forEach(student => {
+      const studentName = student.name;
+      if (studentName && studentName.length >= 2) {
+        const masked = studentName[0] + '*'.repeat(studentName.length - 2) + studentName[studentName.length - 1];
+        const escapedStudentName = studentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(escapedStudentName, 'g');
+        name = name.replace(regex, masked);
+      }
+    });
   }
   
   return name;
@@ -220,10 +225,20 @@ const parseOcrFromFilename = (fileName: string, students: any[]): any => {
   const endDate = sortedDetails[sortedDetails.length - 1]?.date || `${year}-${String(month).padStart(2, '0')}-31`;
 
   const student = students[0];
-  const sanitizedName = sanitizeFileName(fileName, student ? student.name : '');
+  const sanitizedName = sanitizeFileName(fileName, students);
+
+  let rawTitle = cleanEventTitle(fileName);
+  rawTitle = rawTitle.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  let title = rawTitle;
+  if (!title.includes(`${month}월`)) {
+    title = `${month}월 ${title}`;
+  }
+  if (title === `${month}월 대회/훈련 참가` || title === `${month}월 대회/훈련`) {
+    title = `${month}월 평일 훈련`;
+  }
 
   return {
-    title: cleanEventTitle(fileName),
+    title,
     studentId: student?.id || '',
     type: 'competition',
     startDate,
@@ -307,6 +322,7 @@ export default function App() {
   // Selected state for dialogs and detail screens
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
+  const [selectedEventToEdit, setSelectedEventToEdit] = useState<any>(null);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showAddEventModal, setShowAddEventModal] = useState(false);
   const [showDraftModal, setShowDraftModal] = useState(false);
@@ -340,6 +356,12 @@ export default function App() {
   const [modalType, setModalType] = useState('competition');
   const [modalIsException, setModalIsException] = useState(false);
 
+  // Dynamic reasons dropdown options
+  const [eventTypeOptions, setEventTypeOptions] = useState<{[key: string]: string}>({
+    'competition': '평일 연습 경기 및 중등리그 참가',
+    'training': '상시 훈련 참가'
+  });
+
   // Sync modal inputs when ocrPrefilled changes
   useEffect(() => {
     if (ocrPrefilled) {
@@ -358,6 +380,21 @@ export default function App() {
     }
   }, [ocrPrefilled, students]);
 
+  useEffect(() => {
+    if (events && events.length > 0) {
+      setEventTypeOptions(prev => {
+        const next = { ...prev };
+        events.forEach(e => {
+          if (e.type && !next[e.type]) {
+            // Use title or a generic label for existing types
+            next[e.type] = e.type === 'competition' ? '평일 연습 경기 및 중등리그 참가' : e.type === 'training' ? '상시 훈련 참가' : e.type;
+          }
+        });
+        return next;
+      });
+    }
+  }, [events]);
+
 
   // --- Firebase Auth & Load ---
   useEffect(() => {
@@ -373,32 +410,47 @@ export default function App() {
         setLoading(false);
       });
     } else {
-      // Local Storage Fallback loading
-      const localStudents = localStorage.getItem('sam_students');
-      const localEvents = localStorage.getItem('sam_events');
-      if (localStudents) setStudents(JSON.parse(localStudents));
-      else {
-        setStudents(INITIAL_STUDENTS);
-        localStorage.setItem('sam_students', JSON.stringify(INITIAL_STUDENTS));
-      }
-
-      if (localEvents) setEvents(JSON.parse(localEvents));
-      else {
-        setEvents(INITIAL_EVENTS);
-        localStorage.setItem('sam_events', JSON.stringify(INITIAL_EVENTS));
-      }
-      
       const cachedUser = localStorage.getItem('sam_mock_user');
       if (cachedUser) {
         setUser(JSON.parse(cachedUser));
       } else {
         setUser(null);
+        setLoading(false);
       }
-      setLoading(false);
     }
 
     return () => unsubscribeUser();
   }, []);
+
+  // --- Local Storage User Scoped Load ---
+  useEffect(() => {
+    if (!isFirebaseAvailable) {
+      if (user) {
+        const studentsKey = `sam_students_${user.uid}`;
+        const eventsKey = `sam_events_${user.uid}`;
+        const localStudents = localStorage.getItem(studentsKey);
+        const localEvents = localStorage.getItem(eventsKey);
+        
+        if (localStudents) {
+          setStudents(JSON.parse(localStudents));
+        } else {
+          setStudents(INITIAL_STUDENTS);
+          localStorage.setItem(studentsKey, JSON.stringify(INITIAL_STUDENTS));
+        }
+
+        if (localEvents) {
+          setEvents(JSON.parse(localEvents));
+        } else {
+          setEvents(INITIAL_EVENTS);
+          localStorage.setItem(eventsKey, JSON.stringify(INITIAL_EVENTS));
+        }
+      } else {
+        setStudents([]);
+        setEvents([]);
+      }
+      setLoading(false);
+    }
+  }, [user]);
 
   const handleGoogleLogin = async () => {
     if (isFirebaseAvailable && auth) {
@@ -445,8 +497,8 @@ export default function App() {
     if (!isFirebaseAvailable || !user) return;
     setLoading(true);
 
-    const studentsRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
-    const eventsRef = collection(db, 'artifacts', appId, 'public', 'data', 'events');
+    const studentsRef = collection(db, 'artifacts', appId, 'teachers', user.uid, 'students');
+    const eventsRef = collection(db, 'artifacts', appId, 'teachers', user.uid, 'events');
 
     // Subscribe to students
     const unsubscribeStudents = onSnapshot(studentsRef, (snapshot) => {
@@ -457,7 +509,7 @@ export default function App() {
       if (studList.length === 0) {
         // Initialize Firebase with defaults if empty
         INITIAL_STUDENTS.forEach(async (stud) => {
-          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', stud.id), stud);
+          await setDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'students', stud.id), stud);
         });
         setStudents(INITIAL_STUDENTS);
       } else {
@@ -476,7 +528,7 @@ export default function App() {
       });
       if (evtList.length === 0) {
         INITIAL_EVENTS.forEach(async (evt) => {
-          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', evt.id), evt);
+          await setDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'events', evt.id), evt);
         });
         setEvents(INITIAL_EVENTS);
       } else {
@@ -530,11 +582,12 @@ export default function App() {
 
     const updatedList = [...students, newStudent];
     setStudents(updatedList);
-    localStorage.setItem('sam_students', JSON.stringify(updatedList));
+    const studentsKey = user ? `sam_students_${user.uid}` : 'sam_students';
+    localStorage.setItem(studentsKey, JSON.stringify(updatedList));
 
-    if (isFirebaseAvailable && db) {
+    if (isFirebaseAvailable && db && user) {
       try {
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', newStudent.id), newStudent);
+        await setDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'students', newStudent.id), newStudent);
       } catch (e) {
         console.error("Firebase save failed", e);
       }
@@ -546,11 +599,12 @@ export default function App() {
   const handleUpdateStudent = async (studentId: string, updatedFields: any) => {
     const updated = students.map(s => s.id === studentId ? { ...s, ...updatedFields } : s);
     setStudents(updated);
-    localStorage.setItem('sam_students', JSON.stringify(updated));
+    const studentsKey = user ? `sam_students_${user.uid}` : 'sam_students';
+    localStorage.setItem(studentsKey, JSON.stringify(updated));
 
-    if (isFirebaseAvailable && db) {
+    if (isFirebaseAvailable && db && user) {
       try {
-        const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', studentId);
+        const studentDocRef = doc(db, 'artifacts', appId, 'teachers', user.uid, 'students', studentId);
         await updateDoc(studentDocRef, updatedFields);
       } catch (e) {
         console.error("Firebase update failed", e);
@@ -595,17 +649,104 @@ export default function App() {
 
     const updatedList = [...events, eventWithId];
     setEvents(updatedList);
-    localStorage.setItem('sam_events', JSON.stringify(updatedList));
+    const eventsKey = user ? `sam_events_${user.uid}` : 'sam_events';
+    localStorage.setItem(eventsKey, JSON.stringify(updatedList));
 
-    if (isFirebaseAvailable && db) {
+    if (isFirebaseAvailable && db && user) {
       try {
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId), eventWithId);
+        await setDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'events', eventId), eventWithId);
       } catch (e) {
         console.error("Firebase event save failed", e);
       }
     }
     showToast("새 훈련/경기 일정이 캘린더에 성공적으로 자동 배정되었습니다.");
     setShowAddEventModal(false);
+  };
+
+  const handleUpdateEvent = async (eventId: string, updatedFields: any) => {
+    const oldEvent = events.find(e => e.id === eventId);
+    if (!oldEvent) return;
+
+    const newEvent = { ...oldEvent, ...updatedFields };
+
+    // 1. Revert old student stats
+    if (!oldEvent.isExceptionEvent) {
+      const oldStudent = students.find(s => s.id === oldEvent.studentId);
+      if (oldStudent) {
+        let totalAbsences = 0;
+        let totalHours = 0;
+        oldEvent.dailyDetails.forEach((day: any) => {
+          if (day.attendanceType === '결석') totalAbsences += 1;
+          else totalHours += Number(day.missingHours || 0);
+        });
+
+        let rawHours = (oldStudent.usedDays * 6 + oldStudent.accumulatedHours) - (totalAbsences * 6 + totalHours);
+        if (rawHours < 0) rawHours = 0;
+        const restoredDays = Math.floor(rawHours / 6);
+        const restoredHours = rawHours % 6;
+
+        await handleUpdateStudent(oldStudent.id, {
+          usedDays: restoredDays,
+          accumulatedHours: restoredHours
+        });
+      }
+    }
+
+    // 2. Apply new student stats
+    if (!newEvent.isExceptionEvent) {
+      const newStudent = students.find(s => s.id === newEvent.studentId);
+      if (newStudent) {
+        let totalNewAbsences = 0;
+        let totalNewHours = 0;
+        newEvent.dailyDetails.forEach((day: any) => {
+          if (day.attendanceType === '결석') totalNewAbsences += 1;
+          else totalNewHours += Number(day.missingHours || 0);
+        });
+
+        let baseDays = newStudent.usedDays;
+        let baseHours = newStudent.accumulatedHours;
+        if (oldEvent.studentId === newEvent.studentId && !oldEvent.isExceptionEvent) {
+          let totalAbsences = 0;
+          let totalHours = 0;
+          oldEvent.dailyDetails.forEach((day: any) => {
+            if (day.attendanceType === '결석') totalAbsences += 1;
+            else totalHours += Number(day.missingHours || 0);
+          });
+          let rawHours = (newStudent.usedDays * 6 + newStudent.accumulatedHours) - (totalAbsences * 6 + totalHours);
+          if (rawHours < 0) rawHours = 0;
+          baseDays = Math.floor(rawHours / 6);
+          baseHours = rawHours % 6;
+        }
+
+        const newAccumulatedHours = baseHours + totalNewHours;
+        const convertedDays = Math.floor(newAccumulatedHours / 6);
+        const remainingHours = newAccumulatedHours % 6;
+        const updatedDays = baseDays + totalNewAbsences + convertedDays;
+
+        await handleUpdateStudent(newStudent.id, {
+          usedDays: Math.min(35, updatedDays),
+          accumulatedHours: remainingHours
+        });
+      }
+    }
+
+    // 3. Update events list
+    const updatedList = events.map(e => e.id === eventId ? newEvent : e);
+    setEvents(updatedList);
+    const eventsKey = user ? `sam_events_${user.uid}` : 'sam_events';
+    localStorage.setItem(eventsKey, JSON.stringify(updatedList));
+
+    if (isFirebaseAvailable && db && user) {
+      try {
+        await setDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'events', eventId), newEvent);
+      } catch (e) {
+        console.error("Firebase event update failed", e);
+      }
+    }
+
+    showToast("일정이 성공적으로 수정되었습니다.");
+    setShowAddEventModal(false);
+    setSelectedEventToEdit(null);
   };
 
   const handleDeleteEvent = async (eventId: string) => {
@@ -636,11 +777,12 @@ export default function App() {
 
     const filtered = events.filter(e => e.id !== eventId);
     setEvents(filtered);
-    localStorage.setItem('sam_events', JSON.stringify(filtered));
+    const eventsKey = user ? `sam_events_${user.uid}` : 'sam_events';
+    localStorage.setItem(eventsKey, JSON.stringify(filtered));
 
-    if (isFirebaseAvailable && db) {
+    if (isFirebaseAvailable && db && user) {
       try {
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId));
+        await deleteDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'events', eventId));
       } catch (e) {
         console.error("Firebase event delete failed", e);
       }
@@ -662,11 +804,12 @@ export default function App() {
 
     const updated = events.map(e => e.id === eventId ? { ...e, checklist: updatedChecklist, files: updatedFiles } : e);
     setEvents(updated);
-    localStorage.setItem('sam_events', JSON.stringify(updated));
+    const eventsKey = user ? `sam_events_${user.uid}` : 'sam_events';
+    localStorage.setItem(eventsKey, JSON.stringify(updated));
 
-    if (isFirebaseAvailable && db) {
+    if (isFirebaseAvailable && db && user) {
       try {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId), {
+        await updateDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'events', eventId), {
           checklist: updatedChecklist,
           files: updatedFiles
         });
@@ -682,8 +825,7 @@ export default function App() {
     if (!targetEvent) return;
 
     // Sanitize filename to protect student's privacy
-    const student = students.find(s => s.id === targetEvent.studentId);
-    const sanitizedName = sanitizeFileName(fileName, student ? student.name : '');
+    const sanitizedName = sanitizeFileName(fileName, students);
 
     const updatedFiles = { ...targetEvent.files, [fileKey]: sanitizedName };
     const updatedChecklist = { ...targetEvent.checklist };
@@ -694,11 +836,12 @@ export default function App() {
 
     const updated = events.map(e => e.id === eventId ? { ...e, files: updatedFiles, checklist: updatedChecklist } : e);
     setEvents(updated);
-    localStorage.setItem('sam_events', JSON.stringify(updated));
+    const eventsKey = user ? `sam_events_${user.uid}` : 'sam_events';
+    localStorage.setItem(eventsKey, JSON.stringify(updated));
 
-    if (isFirebaseAvailable && db) {
+    if (isFirebaseAvailable && db && user) {
       try {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId), {
+        await updateDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'events', eventId), {
           files: updatedFiles,
           checklist: updatedChecklist
         });
@@ -715,7 +858,7 @@ export default function App() {
 
     // Check duplicate document based on raw and sanitized name comparison
     const isDuplicate = events.some(evt => {
-      const sanitizedFile = sanitizeFileName(file.name, '');
+      const sanitizedFile = sanitizeFileName(file.name, students);
       return evt.uploadedDocName === file.name || 
              evt.files?.document === file.name ||
              evt.uploadedDocName === sanitizedFile ||
@@ -747,11 +890,13 @@ export default function App() {
       clearInterval(interval);
       setOcrProgress(100);
       
+      const sanitizedName = sanitizeFileName(file.name, students);
       const parsedData = parseOcrFromFilename(file.name, students);
       const prefilledData = {
         ...parsedData,
+        uploadedDocName: sanitizedName,
         files: {
-          document: file.name,
+          document: sanitizedName,
           report: '',
           cert: ''
         },
@@ -801,8 +946,9 @@ export default function App() {
 
 1. 대회 또는 훈련에 참가한 학생 선수 이름 (studentName)
 2. 운동 종목 (sport)
-3. 공식 대회 또는 훈련의 정식 명칭 (eventTitle)
-4. 세부 출석인정 일정 리스트 (dailyDetails) - 공문에 명시된 모든 날짜별 결석, 조퇴, 지각 날짜와 교시 정보를 빠짐없이 파싱해줘.
+3. 공식 대회 또는 훈련의 정식 명칭 (eventTitle) - 불필요한 행정 용어(협조 요청, 건, 시간 할애 등)를 제외하고, "[몇월] [핵심 사유/대회명]" 형태로 직관적이고 깔끔하게 요약해라 (예: '7월 평일 훈련', '5월 평일 연습 경기 및 중등리그 참가').
+4. 사유 및 일정 구분 명칭 (eventTypeLabel) - 공문 내용에 나타난 구체적인 참가 사유(예: "평일 연습 경기 및 중등리그 참가", "상시 훈련 참가", "전국소년체육대회 참가", "전국체전 선발전 참가" 등)를 한줄로 추출해라.
+5. 세부 출석인정 일정 리스트 (dailyDetails) - 공문에 명시된 모든 날짜별 결석, 조퇴, 지각 날짜와 교시 정보를 빠짐없이 파싱해줘.
 
 [작성 및 변환 규칙]
 - 날짜(date)는 반드시 YYYY-MM-DD 형식으로 기록하라. (공문 연도가 누락된 경우 2026년으로 가정하라.)
@@ -815,7 +961,8 @@ export default function App() {
 {
   "studentName": "학생 이름",
   "sport": "종목",
-  "eventTitle": "대회/훈련명",
+  "eventTitle": "대회/훈련명 요약",
+  "eventTypeLabel": "사유 및 일정 구분 명칭",
   "dailyDetails": [
     {
       "date": "YYYY-MM-DD",
@@ -852,6 +999,27 @@ export default function App() {
 
       const parsedJson = JSON.parse(match[0]);
       
+      // Dynamically add the parsed eventTypeLabel to dropdown options if it doesn't exist
+      let targetType = 'competition';
+      if (parsedJson.eventTypeLabel) {
+        const cleanedLabel = parsedJson.eventTypeLabel.trim();
+        const existingKey = Object.keys(eventTypeOptions).find(k => eventTypeOptions[k] === cleanedLabel);
+        if (existingKey) {
+          targetType = existingKey;
+        } else {
+          // Check standard mappings first
+          if (cleanedLabel.includes('연습') || cleanedLabel.includes('리그')) {
+            targetType = 'competition';
+          } else if (cleanedLabel.includes('훈련')) {
+            targetType = 'training';
+          } else {
+            const newKey = `custom_${Date.now()}`;
+            setEventTypeOptions(prev => ({ ...prev, [newKey]: cleanedLabel }));
+            targetType = newKey;
+          }
+        }
+      }
+
       // 4. Map parsed student name to register student ID
       let matchedStudent = students.find(s => s.name === parsedJson.studentName);
       if (!matchedStudent && parsedJson.studentName) {
@@ -900,10 +1068,10 @@ export default function App() {
           if (matchedPeriod > 0 && totalHours > 0) {
             // 조퇴 교시가 명시된 경우 결손 시수 = 총수업시수 - 조퇴교시
             hours = totalHours - matchedPeriod;
-            if (hours <= 0) hours = 1; // 최소 1시간
+            if (hours < 0) hours = 0;
           } else {
             // 조퇴 교시가 없고 missingHours만 제공된 경우
-            if (isNaN(hours) || hours <= 0) {
+            if (isNaN(hours) || hours < 0) {
               hours = 1; // 기본 1시간 결손
             }
           }
@@ -926,17 +1094,18 @@ export default function App() {
         };
       });
 
+      const sanitizedName = sanitizeFileName(file.name, students);
       const parsedData = {
-        title: cleanEventTitle(parsedJson.eventTitle || file.name),
+        title: parsedJson.eventTitle || cleanEventTitle(file.name),
         studentId: targetStudentId,
-        type: 'competition',
+        type: targetType,
         startDate: sanitizedDetails[0]?.date || '2026-05-01',
         endDate: sanitizedDetails[sanitizedDetails.length - 1]?.date || '2026-05-31',
         isExceptionEvent: false,
         dailyDetails: sanitizedDetails,
-        uploadedDocName: file.name,
+        uploadedDocName: sanitizedName,
         files: {
-          document: file.name,
+          document: sanitizedName,
           report: '',
           cert: ''
         },
@@ -983,9 +1152,9 @@ export default function App() {
         const periodVal = match ? parseInt(match[1], 10) : null;
         if (periodVal && periodVal > 0) {
           const newHours = totalPeriods - periodVal;
-          current.missingHours = newHours > 0 ? newHours : 1;
+          current.missingHours = newHours >= 0 ? newHours : 0;
         } else {
-          current.missingHours = Math.min(current.missingHours, totalPeriods - 1 || 1);
+          current.missingHours = Math.min(current.missingHours, totalPeriods);
           current.periodInfo = `${totalPeriods - current.missingHours}교시 ${current.attendanceType}`;
         }
       }
@@ -999,7 +1168,7 @@ export default function App() {
       } else {
         const periodVal = 4;
         const newHours = totalPeriods - periodVal;
-        current.missingHours = newHours > 0 ? newHours : 1;
+        current.missingHours = newHours >= 0 ? newHours : 0;
         current.periodInfo = `${periodVal}교시 ${value}`;
       }
       current.eschoolHours = calculateEschoolHours(current.missingHours);
@@ -1014,7 +1183,7 @@ export default function App() {
         if (periodVal > 0) {
           current.periodInfo = `${periodVal}교시 ${current.attendanceType}`;
         } else {
-          current.periodInfo = `1교시 ${current.attendanceType}`;
+          current.periodInfo = `${totalPeriods}교시 ${current.attendanceType}`;
         }
       }
     }
@@ -1022,9 +1191,9 @@ export default function App() {
     else if (field === 'periodInfo') {
       const match = value.match(/(\d+)교시/);
       const parsedPeriod = match ? parseInt(match[1], 10) : parseInt(value.replace(/[^0-9]/g, ''), 10);
-      if (!isNaN(parsedPeriod) && parsedPeriod > 0) {
+      if (!isNaN(parsedPeriod) && parsedPeriod >= 0) {
         const newHours = totalPeriods - parsedPeriod;
-        current.missingHours = newHours > 0 ? newHours : 1;
+        current.missingHours = newHours >= 0 ? newHours : 0;
       }
       current.eschoolHours = calculateEschoolHours(current.missingHours);
     }
@@ -1306,7 +1475,7 @@ export default function App() {
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-black transition-all ${activeTab === 'students' ? 'bg-white text-indigo-900 shadow-sm' : 'text-indigo-100 hover:text-white'}`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>학급명부 ({totalStudents})</span>
+              <span>학생명부 ({totalStudents})</span>
             </button>
             <button 
               onClick={() => setActiveTab('eschool')} 
@@ -1834,13 +2003,29 @@ export default function App() {
                           </div>
 
                           <div className="flex justify-between items-center text-[11px]">
-                            <span className="text-slate-400 font-bold">인정출결 차감 대상</span>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => {
+                                  setSelectedEventToEdit(evt);
+                                  setModalTitle(evt.title);
+                                  setModalStudentId(evt.studentId);
+                                  setModalType(evt.type);
+                                  setModalIsException(evt.isExceptionEvent);
+                                  setModalDailyDetails(evt.dailyDetails || []);
+                                  setShowAddEventModal(true);
+                                }}
+                                className="font-black text-slate-500 hover:text-indigo-600 flex items-center gap-1 cursor-pointer"
+                              >
+                                <Settings className="w-3.5 h-3.5" />
+                                <span>수정</span>
+                              </button>
+                            </div>
                             <button 
                               onClick={() => {
                                 setSelectedEvent(evt);
                                 setActiveTab('eschool');
                               }}
-                              className="font-black text-indigo-600 hover:underline flex items-center gap-0.5"
+                              className="font-black text-indigo-600 hover:underline flex items-center gap-0.5 cursor-pointer"
                             >
                               <span>기안문 생성하기</span>
                               <ChevronRight className="w-3.5 h-3.5" />
@@ -1886,7 +2071,7 @@ export default function App() {
             <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h3 className="font-extrabold text-lg text-slate-900">학급 학생 선수 원격 명부</h3>
+                  <h3 className="font-extrabold text-lg text-slate-900">학생선수 원격 명부</h3>
                   <p className="text-xs text-slate-500">인정결석 35일 한도 체크 및 학기말 최저학력 미도달 런업 특별 시수를 원격 설계합니다.</p>
                 </div>
                 <button 
@@ -2011,14 +2196,15 @@ export default function App() {
                           <td className="py-4 px-4 text-right">
                             <button 
                               onClick={async () => {
-                                if (confirm(`${student.name} 학생선수를 학급 목록에서 지우시겠습니까?`)) {
+                                if (confirm(`${student.name} 학생선수를 학생 목록에서 지우시겠습니까?`)) {
                                   const filtered = students.filter(s => s.id !== student.id);
                                   setStudents(filtered);
-                                  localStorage.setItem('sam_students', JSON.stringify(filtered));
+                                  const studentsKey = user ? `sam_students_${user.uid}` : 'sam_students';
+                                  localStorage.setItem(studentsKey, JSON.stringify(filtered));
 
-                                  if (isFirebaseAvailable && db) {
+                                  if (isFirebaseAvailable && db && user) {
                                     try {
-                                      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id));
+                                      await deleteDoc(doc(db, 'artifacts', appId, 'teachers', user.uid, 'students', student.id));
                                     } catch (e) {
                                       console.error("Firebase delete failed", e);
                                     }
@@ -2432,12 +2618,13 @@ export default function App() {
             <div className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-6 py-4 flex items-center justify-between">
               <h4 className="font-extrabold text-sm flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-yellow-300" />
-                <span>경기 및 인정 조퇴/결석 세부 설계</span>
+                <span>{selectedEventToEdit ? '경기 및 인정 조퇴/결석 세부 수정' : '경기 및 인정 조퇴/결석 세부 설계'}</span>
               </h4>
               <button 
                 onClick={() => {
                   setShowAddEventModal(false);
                   setOcrPrefilled(null);
+                  setSelectedEventToEdit(null);
                 }} 
                 className="text-white hover:text-white/80 transition"
               >
@@ -2459,26 +2646,38 @@ export default function App() {
                   return;
                 }
 
-                handleAddEvent({
-                  studentId,
-                  title,
-                  type,
-                  startDate: startVal,
-                  endDate: endVal,
-                  dailyDetails: modalDailyDetails,
-                  isExceptionEvent,
-                  checklist: {
-                    neisInput: false,
-                    eschoolAssigned: true,
-                    reportSubmitted: false,
-                    certSubmitted: false
-                  },
-                  files: {
-                    document: ocrPrefilled?.uploadedDocName || ocrPrefilled?.files?.document || '',
-                    report: '',
-                    cert: ''
-                  }
-                });
+                if (selectedEventToEdit) {
+                  handleUpdateEvent(selectedEventToEdit.id, {
+                    studentId,
+                    title,
+                    type,
+                    startDate: startVal,
+                    endDate: endVal,
+                    dailyDetails: modalDailyDetails,
+                    isExceptionEvent
+                  });
+                } else {
+                  handleAddEvent({
+                    studentId,
+                    title,
+                    type,
+                    startDate: startVal,
+                    endDate: endVal,
+                    dailyDetails: modalDailyDetails,
+                    isExceptionEvent,
+                    checklist: {
+                      neisInput: false,
+                      eschoolAssigned: true,
+                      reportSubmitted: false,
+                      certSubmitted: false
+                    },
+                    files: {
+                      document: ocrPrefilled?.uploadedDocName || ocrPrefilled?.files?.document || '',
+                      report: '',
+                      cert: ''
+                    }
+                  });
+                }
 
               }} className="p-6 space-y-4">
               
@@ -2506,15 +2705,16 @@ export default function App() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">사유 및 일정구분</label>
-                  <select 
+                   <select 
                     name="type" 
                     required 
                     value={modalType}
                     onChange={(e) => setModalType(e.target.value)}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:ring-2 focus:ring-indigo-500"
                   >
-                    <option value="competition">평일 연습 경기 및 중등리그 참가</option>
-                    <option value="training">상시 훈련 참가</option>
+                    {Object.entries(eventTypeOptions).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -2626,7 +2826,7 @@ export default function App() {
                           <label className="text-[10px] text-slate-400 font-black block mb-0.5">결손시수</label>
                           <input 
                             type="number" 
-                            min="1" 
+                            min="0" 
                             max="7" 
                             value={day.missingHours}
                             onChange={(e) => handleModalDailyDetailChange(index, 'missingHours', Number(e.target.value))}
@@ -2692,6 +2892,7 @@ export default function App() {
                   onClick={() => {
                     setShowAddEventModal(false);
                     setOcrPrefilled(null);
+                    setSelectedEventToEdit(null);
                   }}
                   className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs px-4 py-2.5 rounded-xl transition"
                 >
@@ -2701,7 +2902,7 @@ export default function App() {
                   type="submit" 
                   className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition"
                 >
-                  캘린더 스케줄 배정 완료
+                  {selectedEventToEdit ? '수정 완료' : '캘린더 스케줄 배정 완료'}
                 </button>
               </div>
             </form>
