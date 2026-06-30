@@ -528,23 +528,26 @@ export default function App() {
       runUpStatus: {}
     };
 
+    const updatedList = [...students, newStudent];
+    setStudents(updatedList);
+    localStorage.setItem('sam_students', JSON.stringify(updatedList));
+
     if (isFirebaseAvailable && db) {
       try {
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', newStudent.id), newStudent);
-        showToast(`${name} 학생선수가 성공적으로 등록되었습니다.`);
       } catch (e) {
-        showToast("Firebase 저장 실패, 로컬에 저장합니다.", "error");
+        console.error("Firebase save failed", e);
       }
-    } else {
-      const list = [...students, newStudent];
-      syncLocal(list, null);
-      showToast(`${name} 학생선수가 성공적으로 등록되었습니다.`);
     }
+    showToast(`${name} 학생선수가 성공적으로 등록되었습니다.`);
     setShowAddStudentModal(false);
   };
 
   const handleUpdateStudent = async (studentId: string, updatedFields: any) => {
     const updated = students.map(s => s.id === studentId ? { ...s, ...updatedFields } : s);
+    setStudents(updated);
+    localStorage.setItem('sam_students', JSON.stringify(updated));
+
     if (isFirebaseAvailable && db) {
       try {
         const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', studentId);
@@ -552,8 +555,6 @@ export default function App() {
       } catch (e) {
         console.error("Firebase update failed", e);
       }
-    } else {
-      syncLocal(updated, null);
     }
     showToast("학생 정보가 수정되었습니다.");
   };
@@ -592,18 +593,18 @@ export default function App() {
       }
     }
 
+    const updatedList = [...events, eventWithId];
+    setEvents(updatedList);
+    localStorage.setItem('sam_events', JSON.stringify(updatedList));
+
     if (isFirebaseAvailable && db) {
       try {
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId), eventWithId);
-        showToast("새 훈련/경기 일정이 캘린더에 성공적으로 자동 배정되었습니다.");
       } catch (e) {
-        console.error(e);
+        console.error("Firebase event save failed", e);
       }
-    } else {
-      const list = [...events, eventWithId];
-      syncLocal(null, list);
-      showToast("새 훈련/경기 일정이 캘린더에 성공적으로 자동 배정되었습니다.");
     }
+    showToast("새 훈련/경기 일정이 캘린더에 성공적으로 자동 배정되었습니다.");
     setShowAddEventModal(false);
   };
 
@@ -633,18 +634,18 @@ export default function App() {
       }
     }
 
+    const filtered = events.filter(e => e.id !== eventId);
+    setEvents(filtered);
+    localStorage.setItem('sam_events', JSON.stringify(filtered));
+
     if (isFirebaseAvailable && db) {
       try {
         await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId));
-        showToast("일정이 정상적으로 삭제되었습니다.", "info");
       } catch (e) {
-        console.error(e);
+        console.error("Firebase event delete failed", e);
       }
-    } else {
-      const filtered = events.filter(e => e.id !== eventId);
-      syncLocal(null, filtered);
-      showToast("일정이 정상적으로 삭제되었습니다.", "info");
     }
+    showToast("일정이 정상적으로 삭제되었습니다.", "info");
     setSelectedEvent(null);
   };
 
@@ -659,6 +660,10 @@ export default function App() {
     if (checkKey === 'reportSubmitted' && currentValue === true) updatedFiles.report = '';
     if (checkKey === 'certSubmitted' && currentValue === true) updatedFiles.cert = '';
 
+    const updated = events.map(e => e.id === eventId ? { ...e, checklist: updatedChecklist, files: updatedFiles } : e);
+    setEvents(updated);
+    localStorage.setItem('sam_events', JSON.stringify(updated));
+
     if (isFirebaseAvailable && db) {
       try {
         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId), {
@@ -666,11 +671,8 @@ export default function App() {
           files: updatedFiles
         });
       } catch (e) {
-        console.error(e);
+        console.error("Firebase checklist update failed", e);
       }
-    } else {
-      const updated = events.map(e => e.id === eventId ? { ...e, checklist: updatedChecklist, files: updatedFiles } : e);
-      syncLocal(null, updated);
     }
     showToast(`${checkKey === 'neisInput' ? '나이스 출결' : checkKey === 'eschoolAssigned' ? 'e-school 배정확인' : checkKey === 'reportSubmitted' ? '활동보고서 수합' : '이수확인서 수합'} 상태가 토글되었습니다.`);
   };
@@ -690,6 +692,10 @@ export default function App() {
     if (fileKey === 'cert') updatedChecklist.certSubmitted = true;
     if (fileKey === 'document') updatedChecklist.neisInput = true;
 
+    const updated = events.map(e => e.id === eventId ? { ...e, files: updatedFiles, checklist: updatedChecklist } : e);
+    setEvents(updated);
+    localStorage.setItem('sam_events', JSON.stringify(updated));
+
     if (isFirebaseAvailable && db) {
       try {
         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', eventId), {
@@ -697,11 +703,8 @@ export default function App() {
           checklist: updatedChecklist
         });
       } catch (e) {
-        console.error(e);
+        console.error("Firebase file upload map failed", e);
       }
-    } else {
-      const updated = events.map(e => e.id === eventId ? { ...e, files: updatedFiles, checklist: updatedChecklist } : e);
-      syncLocal(null, updated);
     }
     showToast(`${sanitizedName} 파일이 성공적으로 매핑되었습니다.`);
   };
@@ -964,26 +967,69 @@ export default function App() {
   // --- Dynamic modal daily details change handlers ---
   const handleModalDailyDetailChange = (index: number, field: string, value: any) => {
     const updated = [...modalDailyDetails];
-    updated[index] = { ...updated[index], [field]: value };
+    const current = { ...updated[index], [field]: value };
     
+    const dateStr = current.date;
+    const d = new Date(dateStr);
+    const day = d.getDay(); // 0 = Sun, 1 = Mon, 2 = Tue, 3 = Wed, 4 = Thu, 5 = Fri, 6 = Sat
+    const totalPeriods = (day === 1 || day === 3 || day === 5) ? 6 : (day === 2 || day === 4) ? 7 : 6;
+
     if (field === 'date') {
-      // Re-calculate default missing hours and period info if date changed
-      const hours = getDefaultMissingHoursForDate(value);
-      updated[index].missingHours = hours;
-      updated[index].eschoolHours = calculateEschoolHours(hours);
-      updated[index].periodInfo = getDefaultPeriodInfoForDate(value, updated[index].attendanceType, hours);
+      if (current.attendanceType === '결석') {
+        current.missingHours = totalPeriods;
+        current.periodInfo = '종일결석';
+      } else {
+        const match = current.periodInfo.match(/(\d+)교시/);
+        const periodVal = match ? parseInt(match[1], 10) : null;
+        if (periodVal && periodVal > 0) {
+          const newHours = totalPeriods - periodVal;
+          current.missingHours = newHours > 0 ? newHours : 1;
+        } else {
+          current.missingHours = Math.min(current.missingHours, totalPeriods - 1 || 1);
+          current.periodInfo = `${totalPeriods - current.missingHours}교시 ${current.attendanceType}`;
+        }
+      }
+      current.eschoolHours = calculateEschoolHours(current.missingHours);
     }
     
-    if (field === 'missingHours') {
+    else if (field === 'attendanceType') {
+      if (value === '결석') {
+        current.missingHours = totalPeriods;
+        current.periodInfo = '종일결석';
+      } else {
+        const periodVal = 4;
+        const newHours = totalPeriods - periodVal;
+        current.missingHours = newHours > 0 ? newHours : 1;
+        current.periodInfo = `${periodVal}교시 ${value}`;
+      }
+      current.eschoolHours = calculateEschoolHours(current.missingHours);
+    }
+    
+    else if (field === 'missingHours') {
       const numHours = Number(value);
-      updated[index].eschoolHours = calculateEschoolHours(numHours);
-      updated[index].periodInfo = getDefaultPeriodInfoForDate(updated[index].date, updated[index].attendanceType, numHours);
+      current.missingHours = numHours;
+      current.eschoolHours = calculateEschoolHours(numHours);
+      if (current.attendanceType !== '결석') {
+        const periodVal = totalPeriods - numHours;
+        if (periodVal > 0) {
+          current.periodInfo = `${periodVal}교시 ${current.attendanceType}`;
+        } else {
+          current.periodInfo = `1교시 ${current.attendanceType}`;
+        }
+      }
+    }
+    
+    else if (field === 'periodInfo') {
+      const match = value.match(/(\d+)교시/);
+      const parsedPeriod = match ? parseInt(match[1], 10) : parseInt(value.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(parsedPeriod) && parsedPeriod > 0) {
+        const newHours = totalPeriods - parsedPeriod;
+        current.missingHours = newHours > 0 ? newHours : 1;
+      }
+      current.eschoolHours = calculateEschoolHours(current.missingHours);
     }
 
-    if (field === 'attendanceType') {
-      updated[index].periodInfo = getDefaultPeriodInfoForDate(updated[index].date, value, updated[index].missingHours);
-    }
-    
+    updated[index] = current;
     setModalDailyDetails(updated);
   };
 
@@ -1683,14 +1729,16 @@ export default function App() {
                     onClick={() => {
                       setOcrPrefilled(null);
                       // Set default single day
-                      const defaultDate = '2026-05-15';
-                      const defaultHours = getDefaultMissingHoursForDate(defaultDate);
+                      const defaultDate = '2026-05-15'; // Friday
+                      const totalPeriods = 6; // Friday is 6 periods
+                      const periodVal = 4;
+                      const missingHours = totalPeriods - periodVal; // 2 hours
                       setModalDailyDetails([{
                         date: defaultDate,
                         attendanceType: '조퇴',
-                        missingHours: defaultHours,
-                        eschoolHours: calculateEschoolHours(defaultHours),
-                        periodInfo: `${defaultHours}교시 조퇴`
+                        missingHours: missingHours,
+                        eschoolHours: calculateEschoolHours(missingHours),
+                        periodInfo: `${periodVal}교시 조퇴`
                       }]);
                       setShowAddEventModal(true);
                     }}
@@ -1964,11 +2012,16 @@ export default function App() {
                             <button 
                               onClick={async () => {
                                 if (confirm(`${student.name} 학생선수를 학급 목록에서 지우시겠습니까?`)) {
+                                  const filtered = students.filter(s => s.id !== student.id);
+                                  setStudents(filtered);
+                                  localStorage.setItem('sam_students', JSON.stringify(filtered));
+
                                   if (isFirebaseAvailable && db) {
-                                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id));
-                                  } else {
-                                    const filtered = students.filter(s => s.id !== student.id);
-                                    syncLocal(filtered, null);
+                                    try {
+                                      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id));
+                                    } catch (e) {
+                                      console.error("Firebase delete failed", e);
+                                    }
                                   }
                                   showToast("학생 정보가 정상 삭제되었습니다.", "info");
                                 }
@@ -2608,13 +2661,22 @@ export default function App() {
                       lastDate.setDate(lastDate.getDate() + 1);
                       nextDateStr = `${lastDate.getFullYear()}-${String(lastDate.getMonth() + 1).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
                     }
-                    const defaultHours = getDefaultMissingHoursForDate(nextDateStr);
+                    const d = new Date(nextDateStr);
+                    const day = d.getDay();
+                    const totalPeriods = (day === 1 || day === 3 || day === 5) ? 6 : (day === 2 || day === 4) ? 7 : 6;
+                    const isSchoolDay = day > 0 && day < 6;
+                    
+                    const attendanceType = isSchoolDay ? '조퇴' : '결석';
+                    const periodVal = 4;
+                    const missingHours = isSchoolDay ? (totalPeriods - periodVal) : totalPeriods;
+                    const periodInfo = isSchoolDay ? `${periodVal}교시 조퇴` : '종일결석';
+
                     setModalDailyDetails([...modalDailyDetails, {
                       date: nextDateStr,
-                      attendanceType: defaultHours > 0 ? '조퇴' : '결석',
-                      missingHours: defaultHours,
-                      eschoolHours: calculateEschoolHours(defaultHours),
-                      periodInfo: defaultHours > 0 ? `${defaultHours}교시 조퇴` : '종일결석'
+                      attendanceType,
+                      missingHours,
+                      eschoolHours: calculateEschoolHours(missingHours),
+                      periodInfo
                     }]);
                   }}
                   className="w-full py-2 border-2 border-dashed border-slate-300 hover:border-indigo-500 rounded-xl text-slate-500 hover:text-indigo-600 font-bold text-xs transition flex items-center justify-center gap-1 bg-slate-50"
