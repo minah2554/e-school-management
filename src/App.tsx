@@ -191,31 +191,35 @@ const parseOcrFromFilename = (fileName: string, students: any[]): any => {
   // If we found some days, map them to date strings
   const dailyDetails: any[] = [];
 
+  const createDefaultDayDetail = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const dayOfWeek = d.getDay();
+    const totalPeriods = (dayOfWeek === 1 || dayOfWeek === 3 || dayOfWeek === 5) ? 6 : (dayOfWeek === 2 || dayOfWeek === 4) ? 7 : 6;
+    
+    // Default to 4교시 조퇴 (Attends 1-4 periods, misses remaining)
+    const defaultPeriod = 4;
+    const hours = Math.max(0, totalPeriods - defaultPeriod);
+    
+    return {
+      date: dateStr,
+      attendanceType: '조퇴',
+      missingHours: hours,
+      eschoolHours: calculateEschoolHours(hours),
+      periodInfo: `${defaultPeriod}교시 조퇴`
+    };
+  };
+
   if (days.length > 0) {
     days.forEach(day => {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const defaultHours = getDefaultMissingHoursForDate(dateStr);
-      dailyDetails.push({
-        date: dateStr,
-        attendanceType: defaultHours > 0 ? '조퇴' : '결석',
-        missingHours: defaultHours,
-        eschoolHours: calculateEschoolHours(defaultHours),
-        periodInfo: defaultHours > 0 ? `${defaultHours}교시 조퇴` : '종일결석'
-      });
+      dailyDetails.push(createDefaultDayDetail(dateStr));
     });
   } else {
     // Default 4 days fallback if no dates found in name
     const defaultDays = [7, 12, 14, 26];
     defaultDays.forEach(day => {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const defaultHours = getDefaultMissingHoursForDate(dateStr);
-      dailyDetails.push({
-        date: dateStr,
-        attendanceType: '조퇴',
-        missingHours: defaultHours,
-        eschoolHours: calculateEschoolHours(defaultHours),
-        periodInfo: `${defaultHours}교시 조퇴`
-      });
+      dailyDetails.push(createDefaultDayDetail(dateStr));
     });
   }
 
@@ -263,14 +267,14 @@ const INITIAL_EVENTS = [
     id: 'evt_image_data',
     studentId: 'stud_image_data',
     title: '레오 FC 평일 연습 경기 및 2026 중등축구리그 평일 경기 참가',
-    type: 'competition',
+    type: '평일 연습 경기 및 중등리그 참가',
     startDate: '2026-05-01',
     endDate: '2026-05-31',
     dailyDetails: [
-      { date: '2026-05-07', missingHours: 5, eschoolHours: 2, attendanceType: '조퇴', periodInfo: '3교시 조퇴' },
-      { date: '2026-05-12', missingHours: 1, eschoolHours: 1, attendanceType: '조퇴', periodInfo: '7교시 조퇴' },
-      { date: '2026-05-14', missingHours: 3, eschoolHours: 2, attendanceType: '조퇴', periodInfo: '5교시 조퇴' },
-      { date: '2026-05-26', missingHours: 1, eschoolHours: 1, attendanceType: '조퇴', periodInfo: '7교시 조퇴' }
+      { date: '2026-05-07', missingHours: 3, eschoolHours: 2, attendanceType: '조퇴', periodInfo: '4교시 조퇴' },
+      { date: '2026-05-12', missingHours: 0, eschoolHours: 0, attendanceType: '조퇴', periodInfo: '7교시 조퇴' },
+      { date: '2026-05-14', missingHours: 3, eschoolHours: 2, attendanceType: '조퇴', periodInfo: '4교시 조퇴' },
+      { date: '2026-05-26', missingHours: 0, eschoolHours: 0, attendanceType: '조퇴', periodInfo: '7교시 조퇴' }
     ],
     isExceptionEvent: false,
     checklist: {
@@ -289,7 +293,7 @@ const INITIAL_EVENTS = [
     id: 'evt_1',
     studentId: 'stud_1',
     title: '제55회 전국소년체육대회 대표 선발전',
-    type: 'competition', 
+    type: '평일 연습 경기 및 중등리그 참가', 
     startDate: '2026-06-15',
     endDate: '2026-06-16',
     dailyDetails: [
@@ -353,21 +357,22 @@ export default function App() {
   // Controlled modal form inputs
   const [modalTitle, setModalTitle] = useState('');
   const [modalStudentId, setModalStudentId] = useState('stud_image_data');
-  const [modalType, setModalType] = useState('competition');
+  const [modalType, setModalType] = useState('평일 연습 경기 및 중등리그 참가');
   const [modalIsException, setModalIsException] = useState(false);
 
-  // Dynamic reasons dropdown options
-  const [eventTypeOptions, setEventTypeOptions] = useState<{[key: string]: string}>({
-    'competition': '평일 연습 경기 및 중등리그 참가',
-    'training': '상시 훈련 참가'
-  });
+  // Dynamic history of event types (reasons)
+  const eventTypeHistory = Array.from(new Set([
+    '평일 연습 경기 및 중등리그 참가',
+    '상시 훈련 참가',
+    ...events.map(e => e.type).filter(Boolean)
+  ]));
 
   // Sync modal inputs when ocrPrefilled changes
   useEffect(() => {
     if (ocrPrefilled) {
       setModalTitle(ocrPrefilled.title || '');
       setModalStudentId(ocrPrefilled.studentId || (students[0]?.id || 'stud_image_data'));
-      setModalType(ocrPrefilled.type || 'competition');
+      setModalType(ocrPrefilled.type || '평일 연습 경기 및 중등리그 참가');
       setModalIsException(ocrPrefilled.isExceptionEvent || false);
       if (ocrPrefilled.dailyDetails) {
         setModalDailyDetails(ocrPrefilled.dailyDetails);
@@ -375,25 +380,10 @@ export default function App() {
     } else {
       setModalTitle('');
       setModalStudentId(students[0]?.id || 'stud_image_data');
-      setModalType('competition');
+      setModalType('평일 연습 경기 및 중등리그 참가');
       setModalIsException(false);
     }
   }, [ocrPrefilled, students]);
-
-  useEffect(() => {
-    if (events && events.length > 0) {
-      setEventTypeOptions(prev => {
-        const next = { ...prev };
-        events.forEach(e => {
-          if (e.type && !next[e.type]) {
-            // Use title or a generic label for existing types
-            next[e.type] = e.type === 'competition' ? '평일 연습 경기 및 중등리그 참가' : e.type === 'training' ? '상시 훈련 참가' : e.type;
-          }
-        });
-        return next;
-      });
-    }
-  }, [events]);
 
 
   // --- Firebase Auth & Load ---
@@ -896,7 +886,7 @@ export default function App() {
     }, 150);
 
     // Fallback executor in case of errors or non-image/pdf documents
-    const runFallback = async () => {
+    const runFallback = async (isError = false) => {
       clearInterval(interval);
       setOcrProgress(100);
       
@@ -923,7 +913,11 @@ export default function App() {
         setOcrPrefilled(prefilledData);
         setModalDailyDetails(prefilledData.dailyDetails);
         setShowAddEventModal(true);
-        showToast("공문 정보 분석 완료. 일정을 검수해 주세요.");
+        if (isError) {
+          showToast("공문 AI 분석 실패: 파일명 기반 대체 데이터로 구성되었습니다.", "error");
+        } else {
+          showToast("공문 정보 분석 완료. 일정을 검수해 주세요.");
+        }
       }, 300);
     };
 
@@ -1010,25 +1004,10 @@ export default function App() {
 
       const parsedJson = JSON.parse(match[0]);
       
-      // Dynamically add the parsed eventTypeLabel to dropdown options if it doesn't exist
-      let targetType = 'competition';
+      // Assign targetType directly to the parsed label
+      let targetType = '평일 연습 경기 및 중등리그 참가';
       if (parsedJson.eventTypeLabel) {
-        const cleanedLabel = parsedJson.eventTypeLabel.trim();
-        const existingKey = Object.keys(eventTypeOptions).find(k => eventTypeOptions[k] === cleanedLabel);
-        if (existingKey) {
-          targetType = existingKey;
-        } else {
-          // Check standard mappings first
-          if (cleanedLabel.includes('연습') || cleanedLabel.includes('리그')) {
-            targetType = 'competition';
-          } else if (cleanedLabel.includes('훈련')) {
-            targetType = 'training';
-          } else {
-            const newKey = `custom_${Date.now()}`;
-            setEventTypeOptions(prev => ({ ...prev, [newKey]: cleanedLabel }));
-            targetType = newKey;
-          }
-        }
+        targetType = parsedJson.eventTypeLabel.trim();
       }
 
       // 4. Map parsed student name to register student ID
@@ -1140,7 +1119,7 @@ export default function App() {
 
     } catch (err) {
       console.warn("AI OCR parser error, fallback initiated:", err);
-      runFallback();
+      runFallback(true);
     }
   };
 
@@ -1711,8 +1690,8 @@ export default function App() {
                                       {dayDetail.missingHours}h
                                     </span>
                                     {dayDetail.eschoolHours > 0 && (
-                                      <span className="text-[8px] bg-emerald-100 text-emerald-800 border border-emerald-200 px-1 py-0.5 rounded font-black">
-                                        e스쿨 {dayDetail.eschoolHours}h
+                                      <span className="text-[9px] bg-indigo-100/80 text-indigo-900 border border-indigo-300 px-1.5 py-0.5 rounded-lg font-black shadow-inner">
+                                        e-school: {dayDetail.eschoolHours}시간
                                       </span>
                                     )}
                                   </div>
@@ -2730,17 +2709,21 @@ export default function App() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">사유 및 일정구분</label>
-                   <select 
+                  <input 
+                    type="text"
                     name="type" 
+                    list="eventTypeHistory"
                     required 
                     value={modalType}
                     onChange={(e) => setModalType(e.target.value)}
+                    placeholder="예: 평일 연습 경기 및 중등리그 참가"
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {Object.entries(eventTypeOptions).map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
+                  />
+                  <datalist id="eventTypeHistory">
+                    {eventTypeHistory.map((label, idx) => (
+                      <option key={idx} value={label} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
               </div>
 
@@ -2858,8 +2841,8 @@ export default function App() {
                             className="w-full border border-slate-300 rounded-lg p-1 text-[11px] font-bold"
                           />
                         </div>
-                        <div className="text-[9px] text-indigo-700 font-extrabold bg-indigo-50 px-1.5 py-1 rounded border border-indigo-100/50 flex-shrink-0 self-center">
-                          e스쿨 {day.eschoolHours}h
+                        <div className="text-[10px] text-indigo-800 font-black bg-indigo-100/70 border border-indigo-350 px-2.5 py-1.5 rounded-lg flex-shrink-0 self-center shadow-sm">
+                          e-school: {day.eschoolHours}시간
                         </div>
                       </div>
                     </div>
