@@ -1825,7 +1825,11 @@ export default function App() {
                               return (
                                 <div 
                                   key={evt.id} 
-                                  className="bg-rose-50/20 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-3 shadow-sm text-xs"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEditModal(evt);
+                                  }}
+                                  className="bg-rose-50/20 hover:bg-rose-100/40 border border-slate-200 hover:border-slate-350 px-3 py-1.5 rounded-xl flex items-center gap-3 shadow-sm text-xs cursor-pointer transition"
                                 >
                                   <div className="space-y-0.5">
                                     <div className="flex items-center gap-1.5">
@@ -1843,7 +1847,7 @@ export default function App() {
                                     </span>
                                     {dayDetail.eschoolHours > 0 && (
                                       <span className="text-[9px] bg-indigo-100/80 text-indigo-900 border border-indigo-300 px-1.5 py-0.5 rounded-lg font-black shadow-inner">
-                                        e-school: {dayDetail.eschoolHours}시간
+                                        e스쿨: {dayDetail.eschoolHours}시간
                                       </span>
                                     )}
                                   </div>
@@ -2798,7 +2802,14 @@ export default function App() {
                 const isExceptionEvent = e.target.elements.isExceptionEvent.checked;
 
                 if (modalDailyDetails.length === 0) {
-                  alert("일자별 인정 시간 정보를 최소 1개 이상 등록해 주세요.");
+                  if (selectedEventToEdit) {
+                    if (confirm("일자별 인정 시간 정보가 모두 삭제되었습니다. 이 일정을 전체 삭제하시겠습니까?")) {
+                      handleDeleteEvent(selectedEventToEdit.id);
+                      setShowAddEventModal(false);
+                    }
+                  } else {
+                    alert("일자별 인정 시간 정보를 최소 1개 이상 등록해 주세요.");
+                  }
                   return;
                 }
 
@@ -3055,24 +3066,44 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    setShowAddEventModal(false);
-                    setOcrPrefilled(null);
-                    setSelectedEventToEdit(null);
-                  }}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs px-4 py-2.5 rounded-xl transition"
-                >
-                  취소
-                </button>
-                <button 
-                  type="submit" 
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition"
-                >
-                  {selectedEventToEdit ? '수정 완료' : '캘린더 스케줄 배정 완료'}
-                </button>
+              <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
+                <div>
+                  {selectedEventToEdit && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm("이 일정을 전체 삭제하시겠습니까?")) {
+                          handleDeleteEvent(selectedEventToEdit.id);
+                          setShowAddEventModal(false);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 hover:border-rose-300 font-extrabold text-xs px-3.5 py-2.5 rounded-xl transition cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>일정 전체 삭제</span>
+                    </button>
+                  )}
+                </div>
+                
+                <div className="flex gap-2">
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setShowAddEventModal(false);
+                      setOcrPrefilled(null);
+                      setSelectedEventToEdit(null);
+                    }}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs px-4 py-2.5 rounded-xl transition"
+                  >
+                    취소
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition"
+                  >
+                    {selectedEventToEdit ? '수정 완료' : '캘린더 스케줄 배정 완료'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
