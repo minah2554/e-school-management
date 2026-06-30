@@ -8,7 +8,7 @@ import {
 
 // Firebase Modules for future cloud upgrade (Standard Rules Guard applied)
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
 
 // Declare global variables for Firebase configuration to satisfy TypeScript compiler
@@ -283,6 +283,7 @@ export default function App() {
   // Calendar State
   const [currentDate, setCurrentDate] = useState(new Date(2026, 4, 15)); // Set default view to May 2026
   const [selectedDateEvents, setSelectedDateEvents] = useState<any[]>([]);
+  const [showOnlyEvents, setShowOnlyEvents] = useState(false);
 
   // Toast notification state
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
@@ -301,29 +302,16 @@ export default function App() {
     let unsubscribeUser = () => {};
     
     if (isFirebaseAvailable) {
-      const initAuth = async () => {
-        try {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
-          }
-        } catch (e) {
-          console.error("Firebase auth failed, utilizing mock environment auth", e);
-          setUser({ uid: 'mock-teacher-user', displayName: '담임교사' });
-        }
-      };
-      initAuth();
       unsubscribeUser = onAuthStateChanged(auth, (authUser) => {
         if (authUser) {
           setUser(authUser);
         } else {
-          setUser({ uid: 'mock-teacher-user', displayName: '담임교사' });
+          setUser(null);
         }
+        setLoading(false);
       });
     } else {
-      // Local Storage Fallback
-      setUser({ uid: 'local-teacher-user', displayName: '담임교사' });
+      // Local Storage Fallback loading
       const localStudents = localStorage.getItem('sam_students');
       const localEvents = localStorage.getItem('sam_events');
       if (localStudents) setStudents(JSON.parse(localStudents));
@@ -337,11 +325,58 @@ export default function App() {
         setEvents(INITIAL_EVENTS);
         localStorage.setItem('sam_events', JSON.stringify(INITIAL_EVENTS));
       }
+      
+      const cachedUser = localStorage.getItem('sam_mock_user');
+      if (cachedUser) {
+        setUser(JSON.parse(cachedUser));
+      } else {
+        setUser(null);
+      }
       setLoading(false);
     }
 
     return () => unsubscribeUser();
   }, []);
+
+  const handleGoogleLogin = async () => {
+    if (isFirebaseAvailable && auth) {
+      try {
+        const provider = new GoogleAuthProvider();
+        await signInWithPopup(auth, provider);
+        showToast("구글 계정으로 로그인되었습니다.");
+      } catch (e: any) {
+        console.error("Google Sign-In failed", e);
+        showToast("구글 로그인에 실패했습니다: " + e.message, "error");
+      }
+    } else {
+      // Mock Google Login in Local Mode
+      const mockUser = {
+        uid: 'mock-google-teacher',
+        displayName: '홍민아 교사',
+        email: 'minah.hong@school.egov.kr',
+        photoURL: 'https://api.dicebear.com/7.x/adventurer/svg?seed=minah'
+      };
+      setUser(mockUser);
+      localStorage.setItem('sam_mock_user', JSON.stringify(mockUser));
+      showToast("로컬 모드: 홍민아 교사 계정으로 로그인되었습니다.");
+    }
+  };
+
+  const handleLogout = async () => {
+    if (isFirebaseAvailable && auth) {
+      try {
+        await signOut(auth);
+        setUser(null);
+        showToast("로그아웃 되었습니다.");
+      } catch (e: any) {
+        console.error("Sign-Out failed", e);
+      }
+    } else {
+      setUser(null);
+      localStorage.removeItem('sam_mock_user');
+      showToast("로그아웃 되었습니다.");
+    }
+  };
 
   // --- Fetching from Firestore if User Active ---
   useEffect(() => {
@@ -612,6 +647,21 @@ export default function App() {
   // --- Smart OCR Document Parser via Gemini Multimodal API ---
   const triggerOcrSimulation = async (file: File) => {
     if (!file) return;
+
+    // Check duplicate document based on raw and sanitized name comparison
+    const isDuplicate = events.some(evt => {
+      const sanitizedFile = sanitizeFileName(file.name, '');
+      return evt.uploadedDocName === file.name || 
+             evt.files?.document === file.name ||
+             evt.uploadedDocName === sanitizedFile ||
+             evt.files?.document === sanitizedFile;
+    });
+
+    if (isDuplicate) {
+      showToast("이미 등록된 문서입니다.", "error");
+      return;
+    }
+
     setOcrScanning(true);
     setOcrProgress(10);
 
@@ -648,9 +698,12 @@ export default function App() {
         }
       };
 
-      setTimeout(async () => {
+      setTimeout(() => {
         setOcrScanning(false);
-        await handleAddEvent(prefilledData);
+        setOcrPrefilled(prefilledData);
+        setModalDailyDetails(prefilledData.dailyDetails);
+        setShowAddEventModal(true);
+        showToast("공문 정보 분석 완료. 일정을 검수해 주세요.");
       }, 300);
     };
 
@@ -816,6 +869,7 @@ export default function App() {
         endDate: sanitizedDetails[sanitizedDetails.length - 1]?.date || '2026-05-31',
         isExceptionEvent: false,
         dailyDetails: sanitizedDetails,
+        uploadedDocName: file.name,
         files: {
           document: file.name,
           report: '',
@@ -831,10 +885,12 @@ export default function App() {
 
       clearInterval(interval);
       setOcrProgress(100);
-      setTimeout(async () => {
+      setTimeout(() => {
         setOcrScanning(false);
-        // Automatically save the event into database/local storage (skip opening modal)
-        await handleAddEvent(parsedData);
+        setOcrPrefilled(parsedData);
+        setModalDailyDetails(parsedData.dailyDetails);
+        setShowAddEventModal(true);
+        showToast("공문 분석이 완료되었습니다. 일정을 확인한 후 배정해 주세요.");
       }, 300);
 
     } catch (err) {
@@ -1033,6 +1089,54 @@ export default function App() {
   const startVal = modalDailyDetails[0]?.date || '';
   const endVal = modalDailyDetails[modalDailyDetails.length - 1]?.date || '';
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white">
+        <RefreshCw className="w-10 h-10 text-indigo-400 animate-spin mb-4" />
+        <p className="text-sm font-bold tracking-wider">시스템 로딩 중...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-950 flex flex-col items-center justify-center p-4">
+        {renderToast()}
+        <div className="bg-white/10 backdrop-blur-xl p-8 rounded-3xl border border-white/20 shadow-2xl max-w-md w-full text-center space-y-6 animate-in fade-in duration-300">
+          <div className="flex justify-center">
+            <div className="bg-white/15 p-4 rounded-2xl border border-white/20 shadow-inner">
+              <Sparkles className="w-10 h-10 text-white animate-pulse" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-black tracking-tight text-white">학생선수 스마트 행정 관리</h2>
+            <p className="text-xs text-indigo-200 font-medium">나이스 출결 자동 계산 및 e-school 실시간 추적 포털</p>
+          </div>
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-left text-xs text-indigo-100/90 leading-relaxed space-y-2">
+            <p className="font-bold text-yellow-300">💡 로그인 안내</p>
+            <p>• 학교 행정 업무 처리를 위해 구글 연동 계정으로 로그인해 주세요.</p>
+            <p>• 최초 로그인 시 학교 소속 인증 및 권한 확인 단계가 진행됩니다.</p>
+            <p className="text-[10px] text-indigo-300">• 로컬 개발 모드에서는 클릭 시 홍민아 교사 가상 계정으로 즉시 로그인됩니다.</p>
+          </div>
+          <button 
+            onClick={handleGoogleLogin}
+            className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-900 font-extrabold text-sm py-3.5 px-5 rounded-xl shadow-lg hover:shadow-xl transition transform active:scale-95 duration-100 cursor-pointer"
+          >
+            <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+              <g transform="matrix(1, 0, 0, 1, 0, 0)">
+                <path d="M21.35,11.1H12v2.7h5.38c-0.24,1.28 -0.96,2.37 -2.05,3.1l3.2,2.48c1.87,-1.72 2.97,-4.27 2.97,-7.22C21.5,11.83 21.45,11.45 21.35,11.1z" fill="#4285F4" />
+                <path d="M12,20.5c2.57,0 4.71,-0.85 6.29,-2.32l-3.2,-2.48c-0.89,0.6 -2.02,0.95 -3.09,0.95c-2.38,0 -4.39,-1.61 -5.11,-3.77l-3.3,2.56C5.17,18.43 8.35,20.5 12,20.5z" fill="#34A853" />
+                <path d="M6.89,12.88c-0.18,-0.54 -0.29,-1.11 -0.29,-1.7c0,-0.59 0.11,-1.16 0.29,-1.7L3.59,6.92C2.86,8.38 2.5,10.09 2.5,11.88c0,1.79 0.36,3.5 1.09,4.96L6.89,12.88z" fill="#FBBC05" />
+                <path d="M12,5.88c1.4,0 2.65,0.48 3.64,1.43l2.72,-2.72C16.71,3.06 14.57,2.25 12,2.25c-3.65,0 -6.83,2.07 -8.41,5.08l3.3,2.56C7.61,7.49 9.62,5.88 12,5.88z" fill="#EA4335" />
+              </g>
+            </svg>
+            <span>Google 계정으로 로그인</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       {renderToast()}
@@ -1041,7 +1145,7 @@ export default function App() {
       <header className="bg-gradient-to-r from-violet-600 via-indigo-600 to-indigo-700 text-white sticky top-0 z-40 px-6 py-4 flex flex-wrap items-center justify-between gap-4 shadow-lg shadow-indigo-100">
         <div className="flex items-center gap-3">
           <div className="bg-white/10 backdrop-blur-md text-white p-2.5 rounded-xl border border-white/20 shadow-inner">
-            <Sparkles className="w-6 h-6 text-yellow-300 animate-pulse" />
+            <Sparkles className="w-6 h-6 text-white animate-pulse" />
           </div>
           <div>
             <h1 className="text-xl font-black tracking-tight flex items-center gap-2">
@@ -1063,13 +1167,31 @@ export default function App() {
             <span>중학교 e-school 사이트</span>
           </a>
 
+          {/* Google Profile Badge & Logout */}
+          <div className="flex items-center gap-2 bg-black/15 px-3 py-1.5 rounded-xl border border-white/10 backdrop-blur-md">
+            {user?.photoURL ? (
+              <img src={user.photoURL} alt={user.displayName || 'User'} className="w-5 h-5 rounded-full border border-white/20" />
+            ) : (
+              <div className="w-5 h-5 bg-indigo-500 rounded-full flex items-center justify-center text-[10px] font-black text-white">
+                {(user?.displayName || '교').substring(0, 1)}
+              </div>
+            )}
+            <span className="text-xs font-black text-white truncate max-w-[80px]">{user?.displayName || '담임교사'}님</span>
+            <button 
+              onClick={handleLogout}
+              className="text-[9px] text-indigo-200 hover:text-white font-extrabold bg-white/10 hover:bg-white/20 px-2 py-0.5 rounded transition cursor-pointer"
+            >
+              로그아웃
+            </button>
+          </div>
+
           <div className="flex bg-black/15 p-1 rounded-xl border border-white/10 backdrop-blur-md">
             <button 
               onClick={() => setActiveTab('dashboard')} 
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-black transition-all ${activeTab === 'dashboard' ? 'bg-white text-indigo-900 shadow-sm' : 'text-indigo-100 hover:text-white'}`}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${activeTab === 'dashboard' ? 'bg-white text-indigo-900 shadow-sm' : 'text-indigo-100 hover:text-white'}`}
             >
               <Calendar className="w-3.5 h-3.5" />
-              <span>캘린더/일정</span>
+              <span>일정</span>
             </button>
             <button 
               onClick={() => setActiveTab('students')} 
@@ -1107,10 +1229,10 @@ export default function App() {
           <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition flex items-center justify-between">
             <div>
               <span className="text-xs text-slate-400 font-black block mb-1">행정 미종결 일정</span>
-              <span className="text-2xl font-black text-amber-500">{pendingChecklists}건 발생</span>
+              <span className="text-2xl font-black text-rose-600">{pendingChecklists}건 발생</span>
             </div>
-            <div className="bg-amber-50 text-amber-500 p-3 rounded-2xl">
-              <AlertTriangle className="w-6 h-6" />
+            <div className="bg-rose-50 text-rose-600 p-3 rounded-2xl">
+              <AlertTriangle className="w-6 h-6 animate-pulse" />
             </div>
           </div>
 
@@ -1191,91 +1313,218 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Day headers */}
-              <div className="grid grid-cols-7 text-center gap-1 mb-2">
-                {['일', '월', '화', '수', '목', '금', '토'].map((d, idx) => (
-                  <span key={idx} className={`text-xs font-bold py-1.5 ${idx === 0 ? 'text-rose-500' : idx === 6 ? 'text-indigo-500' : 'text-slate-400'}`}>
-                    {d}
-                  </span>
-                ))}
+              {/* 보기 모드 선택기 */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-xl">
+                  <button
+                    onClick={() => setShowOnlyEvents(false)}
+                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      !showOnlyEvents 
+                        ? 'bg-white text-indigo-900 shadow-sm font-black' 
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    달력형 보기
+                  </button>
+                  <button
+                    onClick={() => setShowOnlyEvents(true)}
+                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      showOnlyEvents 
+                        ? 'bg-white text-indigo-900 shadow-sm font-black' 
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    이벤트 있는 일정만 보기 (모바일 권장)
+                  </button>
+                </div>
               </div>
 
-              {/* Month dates builder */}
-              <div className="grid grid-cols-7 gap-2">
-                {Array.from({ length: getFirstDayOfMonth(currentDate) }).map((_, idx) => (
-                  <div key={`empty-${idx}`} className="bg-slate-50/50 rounded-xl h-20 border border-slate-100/50"></div>
-                ))}
-                
-                {Array.from({ length: getDaysInMonth(currentDate) }).map((_, idx) => {
-                  const dayNum = idx + 1;
-                  const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
-                  const dayEvents = getEventsForDate(dateStr);
-                  
-                  // Mock highlighting
-                  const isCurrent = dayNum === 15 && currentDate.getMonth() === 4; 
+              {showOnlyEvents ? (
+                /* 모바일 및 간소화용 이벤트 리스트 보기 */
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                  {(() => {
+                    const daysInMonth = getDaysInMonth(currentDate);
+                    const activeDays: any[] = [];
+                    
+                    for (let d = 1; d <= daysInMonth; d++) {
+                      const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                      const dayEvents = getEventsForDate(dateStr);
+                      if (dayEvents.length > 0) {
+                        activeDays.push({
+                          dayNum: d,
+                          dateStr,
+                          dayEvents
+                        });
+                      }
+                    }
 
-                  return (
-                    <button 
-                      key={dayNum} 
-                      onClick={() => setSelectedDateEvents(dayEvents)}
-                      className={`h-24 p-1.5 rounded-xl border flex flex-col text-left transition relative group ${
-                        isCurrent 
-                          ? 'border-indigo-600 bg-indigo-50/20 ring-2 ring-indigo-600/10' 
-                          : 'border-slate-100 hover:border-slate-300 bg-white'
-                      } ${dayEvents.length > 0 ? 'shadow-sm shadow-indigo-50/30' : ''}`}
-                    >
-                      <span className={`text-xs font-bold leading-none mb-1 inline-block p-1 rounded ${
-                        isCurrent ? 'bg-indigo-600 text-white font-extrabold shadow-sm' : 'text-slate-600'
-                      }`}>
-                        {dayNum}
-                      </span>
+                    if (activeDays.length === 0) {
+                      return (
+                        <div className="text-center py-16 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400">
+                          <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+                          <p className="text-xs font-bold">이번 달에 예정된 학사 결손 및 대회 참가가 없습니다.</p>
+                        </div>
+                      );
+                    }
 
-                      {/* Display small dots or tags for athletes scheduled */}
-                      <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-none mt-1 w-full">
-                        {dayEvents.map(evt => {
-                          const student = students.find(s => s.id === evt.studentId);
-                          
-                          // Find period detail for this date if exists
-                          const dayDetail = evt.dailyDetails?.find((d: any) => d.date === dateStr);
-                          if (!dayDetail) return null;
+                    return activeDays.map(({ dayNum, dateStr, dayEvents }) => {
+                      const dObj = new Date(dateStr);
+                      const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+                      const dayName = dayNames[dObj.getDay()];
+                      const isSunday = dObj.getDay() === 0;
+                      const isSaturday = dObj.getDay() === 6;
 
-                          return (
-                            <div 
-                              key={evt.id} 
-                              className="bg-slate-50 border border-slate-200 p-1.5 rounded-lg flex flex-col gap-1 shadow-sm"
-                            >
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="font-extrabold text-[10px] text-slate-900 truncate">
-                                  {student ? student.name.substring(0, 1) + '*' + student.name.substring(student.name.length - 1) : '학생'}
-                                </span>
-                                <span className={`text-[8px] px-1 py-0.5 rounded-sm font-black flex-shrink-0 ${
-                                  dayDetail.attendanceType === '결석' ? 'bg-rose-100 text-rose-800' :
-                                  dayDetail.attendanceType === '조퇴' ? 'bg-amber-100 text-amber-800' :
-                                  'bg-blue-100 text-blue-800'
-                                }`}>
-                                  {dayDetail.attendanceType} {dayDetail.missingHours}h
-                                </span>
-                              </div>
-                              {dayDetail.eschoolHours > 0 && (
-                                <span className="text-[8px] bg-emerald-100 text-emerald-800 px-1 py-0.5 rounded-sm font-black text-center block">
-                                  e스쿨 {dayDetail.eschoolHours}h
-                                </span>
-                              )}
+                      return (
+                        <div 
+                          key={dateStr}
+                          className="bg-white border border-slate-200 hover:border-slate-300 p-4 rounded-2xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm"
+                        >
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center border font-black text-center shrink-0 ${
+                              isSunday ? 'bg-rose-50 border-rose-100 text-rose-600' :
+                              isSaturday ? 'bg-indigo-50 border-indigo-100 text-indigo-600' :
+                              'bg-slate-50 border-slate-200 text-slate-700'
+                            }`}>
+                              <span className="text-[9px] leading-none uppercase">{dayName}</span>
+                              <span className="text-lg leading-none mt-0.5">{dayNum}</span>
                             </div>
-                          );
-                        })}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                            <div>
+                              <h4 className="font-extrabold text-sm text-slate-900">
+                                {currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월 {dayNum}일
+                              </h4>
+                              <p className="text-[10px] text-slate-400 font-bold">일정 {dayEvents.length}건 등록됨</p>
+                            </div>
+                          </div>
+
+                          <div className="flex-1 flex flex-wrap gap-2">
+                            {dayEvents.map((evt: any) => {
+                              const student = students.find(s => s.id === evt.studentId);
+                              const dayDetail = evt.dailyDetails?.find((d: any) => d.date === dateStr);
+                              if (!dayDetail) return null;
+
+                              return (
+                                <div 
+                                  key={evt.id} 
+                                  className="bg-rose-50/20 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-3 shadow-sm text-xs"
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-black text-slate-900">{student ? maskStudentName(student.name) : '학생'}</span>
+                                      <span className="text-[9px] text-slate-400 font-semibold">{student?.gradeClass}</span>
+                                    </div>
+                                    <p className="text-[9px] text-slate-500 font-bold leading-normal truncate max-w-[150px]" title={evt.title}>
+                                      {evt.title}
+                                    </p>
+                                  </div>
+                                  
+                                  <div className="flex items-center gap-2 shrink-0 border-l border-slate-200 pl-2">
+                                    <span className="text-xs font-black text-rose-600 bg-rose-100/80 px-1.5 py-0.5 rounded">
+                                      {dayDetail.missingHours}h
+                                    </span>
+                                    {dayDetail.eschoolHours > 0 && (
+                                      <span className="text-[8px] bg-emerald-100 text-emerald-800 border border-emerald-200 px-1 py-0.5 rounded font-black">
+                                        e스쿨 {dayDetail.eschoolHours}h
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <button 
+                            onClick={() => setSelectedDateEvents(dayEvents)}
+                            className="text-[11px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 px-3 py-2 rounded-xl transition self-end sm:self-center cursor-pointer"
+                          >
+                            일정 선택
+                          </button>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              ) : (
+                /* 표준 7열 달력 그리드 보기 */
+                <>
+                  {/* Day headers */}
+                  <div className="grid grid-cols-7 text-center gap-1 mb-2">
+                    {['일', '월', '화', '수', '목', '금', '토'].map((d, idx) => (
+                      <span key={idx} className={`text-xs font-bold py-1.5 ${idx === 0 ? 'text-rose-500' : idx === 6 ? 'text-indigo-500' : 'text-slate-400'}`}>
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Month dates builder */}
+                  <div className="grid grid-cols-7 gap-2">
+                    {Array.from({ length: getFirstDayOfMonth(currentDate) }).map((_, idx) => (
+                      <div key={`empty-${idx}`} className="bg-slate-50/50 rounded-xl h-20 border border-slate-100/50"></div>
+                    ))}
+                    
+                    {Array.from({ length: getDaysInMonth(currentDate) }).map((_, idx) => {
+                      const dayNum = idx + 1;
+                      const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+                      const dayEvents = getEventsForDate(dateStr);
+                      
+                      // Mock highlighting
+                      const isCurrent = dayNum === 15 && currentDate.getMonth() === 4; 
+
+                      return (
+                        <button 
+                          key={dayNum} 
+                          onClick={() => setSelectedDateEvents(dayEvents)}
+                          className={`h-24 p-1.5 rounded-xl border flex flex-col text-left transition relative group cursor-pointer ${
+                            isCurrent 
+                              ? 'border-indigo-600 bg-indigo-50/20 ring-2 ring-indigo-600/10' 
+                              : 'border-slate-100 hover:border-slate-300 bg-white'
+                          } ${dayEvents.length > 0 ? 'shadow-sm shadow-indigo-50/30' : ''}`}
+                        >
+                          <span className={`text-[10px] font-bold leading-none mb-1 inline-block p-1 rounded ${
+                            isCurrent ? 'bg-indigo-600 text-white font-extrabold shadow-sm' : 'text-slate-600'
+                          }`}>
+                            {dayNum}
+                          </span>
+
+                          <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-none mt-1 w-full">
+                            {dayEvents.map(evt => {
+                              const student = students.find(s => s.id === evt.studentId);
+                              const dayDetail = evt.dailyDetails?.find((d: any) => d.date === dateStr);
+                              if (!dayDetail) return null;
+
+                              return (
+                                <div 
+                                  key={evt.id} 
+                                  className="bg-rose-50/40 border-l-4 border-rose-500 border-t border-r border-b border-slate-200/60 p-1 rounded flex flex-col gap-0.5 shadow-sm"
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-bold text-[9px] text-slate-800 truncate">
+                                      {student ? maskStudentName(student.name) : '학생'}
+                                    </span>
+                                    <span className="text-[9px] font-black text-rose-600 bg-rose-100/80 px-1 py-0.2 rounded flex-shrink-0">
+                                      {dayDetail.missingHours}h
+                                    </span>
+                                  </div>
+                                  {dayDetail.eschoolHours > 0 && (
+                                    <span className="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-150 px-1 py-0.2 rounded font-black text-center block leading-none">
+                                      e스쿨 {dayDetail.eschoolHours}h
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
 
               {/* Legends */}
               <div className="mt-5 flex flex-wrap items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200/60 text-xs text-slate-500 font-semibold">
                 <span className="font-extrabold text-slate-700">색상 범례:</span>
-                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-rose-100 border border-rose-300 rounded-sm"></span> 대회 조퇴/결석</span>
-                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-purple-100 border border-purple-300 rounded-sm"></span> 상시/평일 훈련</span>
-                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-slate-200 border border-slate-300 rounded-sm"></span> 일반 일과</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-rose-50 border-l-4 border-rose-500 rounded-sm"></span> 결손 시간 (빨간색 & 시수 표시)</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-emerald-50 border border-emerald-250 rounded-sm"></span> e-school 배정 완료</span>
               </div>
             </div>
 
@@ -1285,39 +1534,79 @@ export default function App() {
               {/* 월간 행정 현황판 */}
               {(() => {
                 const stats = getMonthlyStats();
+                const totalTasks = stats.neisInput.total + stats.eschoolAssigned.total + stats.reportSubmitted.total + stats.certSubmitted.total;
+                const completedTasks = stats.neisInput.done + stats.eschoolAssigned.done + stats.reportSubmitted.done + stats.certSubmitted.done;
+                const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
                 return (
-                  <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-5 rounded-2xl shadow-lg border border-indigo-500/10 space-y-4">
-                    <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                      <h4 className="font-extrabold text-xs tracking-tight flex items-center gap-1.5 text-yellow-300">
-                        <Sparkles className="w-4 h-4 text-yellow-300 animate-pulse" />
-                        <span>{currentDate.getMonth() + 1}월 행정 현황판</span>
-                      </h4>
-                      <span className="text-[10px] font-bold text-slate-400">실시간 연동</span>
+                  <div className="bg-white p-6 rounded-2xl border border-indigo-100 shadow-xl shadow-indigo-50/50 space-y-5">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="bg-indigo-50 text-indigo-600 p-2 rounded-xl">
+                          <FileText className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-sm text-slate-900">
+                            {currentDate.getMonth() + 1}월 행정 종합 현황판
+                          </h4>
+                          <p className="text-[10px] text-slate-400 font-bold">전체 문서 수합 및 확인 현황</p>
+                        </div>
+                      </div>
+                      <span className="text-[9px] bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full font-black">실시간 연동</span>
                     </div>
 
+                    {/* Completion Progress Bar */}
+                    <div className="space-y-2 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                      <div className="flex items-center justify-between text-xs font-extrabold">
+                        <span className="text-slate-600">전체 행정 종결율</span>
+                        <span className="text-indigo-600">{completionRate}% ({completedTasks}/{totalTasks} 완료)</span>
+                      </div>
+                      <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                        <div 
+                          className="bg-indigo-600 h-full rounded-full transition-all duration-500" 
+                          style={{ width: `${completionRate}%` }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    {/* Core metrics grid */}
                     <div className="grid grid-cols-2 gap-3 text-center">
-                      <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
-                        <span className="text-[10px] text-slate-400 block font-semibold">e-school 배정 시간</span>
-                        <span className="text-lg font-black text-indigo-300">{stats.totalEschoolHours}시간</span>
+                      <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-xl">
+                        <span className="text-[10px] text-indigo-950/70 block font-bold">e-school 배정 시수</span>
+                        <span className="text-2xl font-black text-indigo-900">{stats.totalEschoolHours}h</span>
                       </div>
-                      <div className="bg-white/5 p-2.5 rounded-xl border border-white/5 flex flex-col justify-center">
-                        <span className="text-[10px] text-slate-400 block font-semibold">나이스 전체 입력</span>
-                        <span className="text-lg font-black text-slate-200">{stats.neisInput.done} / {stats.neisInput.total}</span>
+                      <div className="bg-rose-50/50 border border-rose-100 p-3 rounded-xl">
+                        <span className="text-[10px] text-rose-950/70 block font-bold">나이스 출결 입력</span>
+                        <span className="text-2xl font-black text-rose-700">{stats.neisInput.done} / {stats.neisInput.total}</span>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold pt-1">
-                      <div className="bg-white/5 p-2 rounded-lg border border-white/5">
-                        <span className="text-[9px] text-slate-400 block font-medium">이-스쿨 확인</span>
-                        <span className="text-xs font-black text-slate-200">{stats.eschoolAssigned.done}/{stats.eschoolAssigned.total}</span>
-                      </div>
-                      <div className="bg-white/5 p-2 rounded-lg border border-white/5">
-                        <span className="text-[9px] text-slate-400 block font-medium">활동보고 수합</span>
-                        <span className="text-xs font-black text-slate-200">{stats.reportSubmitted.done}/{stats.reportSubmitted.total}</span>
-                      </div>
-                      <div className="bg-white/5 p-2 rounded-lg border border-white/5">
-                        <span className="text-[9px] text-slate-400 block font-medium">이수증 수합</span>
-                        <span className="text-xs font-black text-slate-200">{stats.certSubmitted.done}/{stats.certSubmitted.total}</span>
+                    {/* Detailed Task Checklist progress */}
+                    <div className="space-y-3 pt-1">
+                      <span className="text-[10px] text-slate-400 font-black block uppercase">세부 서류 수합 진행률</span>
+                      
+                      <div className="space-y-2.5">
+                        {[
+                          { label: "e-school 수강 배정", done: stats.eschoolAssigned.done, total: stats.eschoolAssigned.total, color: "bg-indigo-600" },
+                          { label: "개인 활동보고서 수합", done: stats.reportSubmitted.done, total: stats.reportSubmitted.total, color: "bg-purple-600" },
+                          { label: "이수확인증 최종 수합", done: stats.certSubmitted.done, total: stats.certSubmitted.total, color: "bg-emerald-600" }
+                        ].map((item, index) => {
+                          const rate = item.total > 0 ? Math.round((item.done / item.total) * 100) : 0;
+                          return (
+                            <div key={index} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+                                <span>{item.label}</span>
+                                <span>{item.done}/{item.total} ({rate}%)</span>
+                              </div>
+                              <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                <div 
+                                  className={`${item.color} h-full rounded-full`} 
+                                  style={{ width: `${rate}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -1697,9 +1986,15 @@ export default function App() {
 
                           <div className="flex flex-col sm:items-end gap-2">
                             <span className={`text-xs font-black px-3 py-1.5 rounded-full flex items-center gap-1 ${
-                              isAllCollected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                              isAllCollected 
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                                : 'bg-rose-50 text-rose-600 border border-rose-150 animate-pulse'
                             }`}>
-                              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              {isAllCollected ? (
+                                <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5 text-rose-600 animate-bounce" />
+                              )}
                               <span>{checkedCount}/4 완료 ({isAllCollected ? '종결 대기' : '수합 중'})</span>
                             </span>
                             <button 
@@ -2038,40 +2333,42 @@ export default function App() {
               </button>
             </div>
             
-            <form onSubmit={(e: any) => {
-              e.preventDefault();
-              const title = e.target.elements.title.value;
-              const studentId = e.target.elements.studentId.value;
-              const type = e.target.elements.type.value;
-              const isExceptionEvent = e.target.elements.isExceptionEvent.checked;
+            <form 
+              key={ocrPrefilled ? `prefill-${ocrPrefilled.studentId}-${ocrPrefilled.uploadedDocName || ''}` : 'new-event'}
+              onSubmit={(e: any) => {
+                e.preventDefault();
+                const title = e.target.elements.title.value;
+                const studentId = e.target.elements.studentId.value;
+                const type = e.target.elements.type.value;
+                const isExceptionEvent = e.target.elements.isExceptionEvent.checked;
 
-              if (modalDailyDetails.length === 0) {
-                alert("일자별 인정 시간 정보를 최소 1개 이상 등록해 주세요.");
-                return;
-              }
-
-              handleAddEvent({
-                studentId,
-                title,
-                type,
-                startDate: startVal,
-                endDate: endVal,
-                dailyDetails: modalDailyDetails,
-                isExceptionEvent,
-                checklist: {
-                  neisInput: false,
-                  eschoolAssigned: true,
-                  reportSubmitted: false,
-                  certSubmitted: false
-                },
-                files: {
-                  document: ocrPrefilled?.uploadedDocName || '',
-                  report: '',
-                  cert: ''
+                if (modalDailyDetails.length === 0) {
+                  alert("일자별 인정 시간 정보를 최소 1개 이상 등록해 주세요.");
+                  return;
                 }
-              });
 
-            }} className="p-6 space-y-4">
+                handleAddEvent({
+                  studentId,
+                  title,
+                  type,
+                  startDate: startVal,
+                  endDate: endVal,
+                  dailyDetails: modalDailyDetails,
+                  isExceptionEvent,
+                  checklist: {
+                    neisInput: false,
+                    eschoolAssigned: true,
+                    reportSubmitted: false,
+                    certSubmitted: false
+                  },
+                  files: {
+                    document: ocrPrefilled?.uploadedDocName || ocrPrefilled?.files?.document || '',
+                    report: '',
+                    cert: ''
+                  }
+                });
+
+              }} className="p-6 space-y-4">
               
               {ocrPrefilled && (
                 <div className="bg-emerald-50 text-emerald-800 p-3.5 rounded-xl border border-emerald-200 text-xs font-semibold">

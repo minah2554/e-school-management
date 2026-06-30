@@ -29,6 +29,21 @@ export default defineConfig(({ mode }) => {
                     return;
                   }
 
+                  const parts: any[] = [
+                    {
+                      text: parsedBody.prompt
+                    }
+                  ];
+
+                  if (parsedBody.fileData && parsedBody.fileData.base64 && parsedBody.fileData.mimeType) {
+                    parts.push({
+                      inlineData: {
+                        mimeType: parsedBody.fileData.mimeType,
+                        data: parsedBody.fileData.base64
+                      }
+                    });
+                  }
+
                   const response = await fetch(
                     `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`,
                     {
@@ -39,11 +54,7 @@ export default defineConfig(({ mode }) => {
                       body: JSON.stringify({
                         contents: [
                           {
-                            parts: [
-                              {
-                                text: parsedBody.prompt
-                              }
-                            ]
+                            parts: parts
                           }
                         ]
                       })
