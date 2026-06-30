@@ -106,6 +106,44 @@ const calculateEschoolHours = (hours: number) => {
   return 2;
 };
 
+// --- Clean Event Title Helper to truncate administrative terms ---
+const cleanEventTitle = (fileName: string): string => {
+  if (!fileName) return '';
+  let title = fileName.replace(/\.[^/.]+$/, ""); // Remove file extension
+  
+  // 1. Remove brackets with dates/info: e.g., (26.03.10), [공문], etc.
+  title = title.replace(/\([\d\.\-\s]+\)/g, "");
+  title = title.replace(/\[[^\]]+\]/g, "");
+  title = title.replace(/\{[^\}]+\}/g, "");
+
+  // 2. Truncate at common administrative keywords
+  const keywords = [
+    "에 따른", 
+    "참가에", 
+    "협조", 
+    "요청", 
+    "시간할애", 
+    "시간 할애", 
+    "공문", 
+    "출석 인정", 
+    "출석인정", 
+    "건$", 
+    "발송"
+  ];
+  
+  for (const keyword of keywords) {
+    const index = title.indexOf(keyword);
+    if (index !== -1) {
+      title = title.substring(0, index);
+    }
+  }
+
+  // Remove trailing spaces, punctuation or dashes
+  title = title.trim().replace(/[-_~:\s]+$/, "").trim();
+
+  return title || "대회/훈련 참가";
+};
+
 // --- Smart OCR Document Parser Simulation ---
 const parseOcrFromFilename = (fileName: string, students: any[]): any => {
   let year = 2026; // Default to 2026 as per user mock data
@@ -185,7 +223,7 @@ const parseOcrFromFilename = (fileName: string, students: any[]): any => {
   const sanitizedName = sanitizeFileName(fileName, student ? student.name : '');
 
   return {
-    title: sanitizedName.replace(/\.[^/.]+$/, "") + " 출석 인정",
+    title: cleanEventTitle(fileName),
     studentId: student?.id || '',
     type: 'competition',
     startDate,
@@ -295,6 +333,30 @@ export default function App() {
 
   // Dynamic daily details inside schedule creator
   const [modalDailyDetails, setModalDailyDetails] = useState<any[]>([]);
+
+  // Controlled modal form inputs
+  const [modalTitle, setModalTitle] = useState('');
+  const [modalStudentId, setModalStudentId] = useState('stud_image_data');
+  const [modalType, setModalType] = useState('competition');
+  const [modalIsException, setModalIsException] = useState(false);
+
+  // Sync modal inputs when ocrPrefilled changes
+  useEffect(() => {
+    if (ocrPrefilled) {
+      setModalTitle(ocrPrefilled.title || '');
+      setModalStudentId(ocrPrefilled.studentId || (students[0]?.id || 'stud_image_data'));
+      setModalType(ocrPrefilled.type || 'competition');
+      setModalIsException(ocrPrefilled.isExceptionEvent || false);
+      if (ocrPrefilled.dailyDetails) {
+        setModalDailyDetails(ocrPrefilled.dailyDetails);
+      }
+    } else {
+      setModalTitle('');
+      setModalStudentId(students[0]?.id || 'stud_image_data');
+      setModalType('competition');
+      setModalIsException(false);
+    }
+  }, [ocrPrefilled, students]);
 
 
   // --- Firebase Auth & Load ---
@@ -862,7 +924,7 @@ export default function App() {
       });
 
       const parsedData = {
-        title: parsedJson.eventTitle || file.name.replace(/\.[^/.]+$/, "") + " 출석 인정",
+        title: cleanEventTitle(parsedJson.eventTitle || file.name),
         studentId: targetStudentId,
         type: 'competition',
         startDate: sanitizedDetails[0]?.date || '2026-05-01',
@@ -1261,6 +1323,7 @@ export default function App() {
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) triggerOcrSimulation(file);
+                    e.target.value = ''; // Reset value to allow re-uploading the same file
                   }}
                 />
               </label>
@@ -2378,7 +2441,8 @@ export default function App() {
                   <select 
                     name="studentId" 
                     required 
-                    defaultValue={ocrPrefilled?.studentId || "stud_image_data"}
+                    value={modalStudentId}
+                    onChange={(e) => setModalStudentId(e.target.value)}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:ring-2 focus:ring-indigo-500"
                   >
                     {students.map(s => (
@@ -2392,7 +2456,8 @@ export default function App() {
                   <select 
                     name="type" 
                     required 
-                    defaultValue={ocrPrefilled?.type || "competition"}
+                    value={modalType}
+                    onChange={(e) => setModalType(e.target.value)}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="competition">평일 연습 경기 및 중등리그 참가</option>
@@ -2407,7 +2472,8 @@ export default function App() {
                   type="text" 
                   name="title" 
                   placeholder="예: 레오 FC 평일 연습 경기 및 2026 중등축구리그"
-                  defaultValue={ocrPrefilled?.title || "레오 FC 평일 연습 경기 및 2026 중등축구리그 평일 경기 참가"}
+                  value={modalTitle}
+                  onChange={(e) => setModalTitle(e.target.value)}
                   required 
                   className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500"
                 />
@@ -2451,7 +2517,8 @@ export default function App() {
                   <input 
                     type="checkbox" 
                     name="isExceptionEvent" 
-                    defaultChecked={ocrPrefilled?.isExceptionEvent || false}
+                    checked={modalIsException}
+                    onChange={(e) => setModalIsException(e.target.checked)}
                     className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4 border-slate-300"
                   />
                   <div>
