@@ -112,16 +112,32 @@ const calculateEschoolHours = (hours: number) => {
 };
 
 // --- Clean Event Title Helper to truncate administrative terms ---
-const cleanEventTitle = (fileName: string): string => {
+const cleanEventTitle = (fileName: string, studentsList: any[] = []): string => {
   if (!fileName) return '';
   let title = fileName.replace(/\.[^/.]+$/, ""); // Remove file extension
   
-  // 1. Remove brackets with dates/info: e.g., (26.03.10), [공문], etc.
-  title = title.replace(/\([\d\.\-\s]+\)/g, "");
-  title = title.replace(/\[[^\]]+\]/g, "");
-  title = title.replace(/\{[^\}]+\}/g, "");
+  // 1. Remove brackets and parenthetical contents
+  title = title.replace(/\([\s\S]*?\)/g, "");
+  title = title.replace(/\[[\s\S]*?\]/g, "");
+  title = title.replace(/\{[\s\S]*?\}/g, "");
+  title = title.replace(/[\(\)\[\]\{\}]/g, ""); // strip unmatched ones
 
-  // 2. Truncate at common administrative keywords
+  // 2. Remove numbers and month labels (e.g., "5월", "12")
+  title = title.replace(/\d+월/g, "");
+  title = title.replace(/\d+/g, "");
+
+  // 3. Strip student names
+  if (studentsList && Array.isArray(studentsList)) {
+    studentsList.forEach(s => {
+      if (s.name) {
+        const cleanName = s.name.replace(/\s+/g, '');
+        title = title.replace(new RegExp(cleanName, 'g'), '');
+        title = title.replace(new RegExp(s.name, 'g'), '');
+      }
+    });
+  }
+
+  // 4. Truncate at common administrative keywords
   const keywords = [
     "에 따른", 
     "참가에", 
@@ -143,8 +159,8 @@ const cleanEventTitle = (fileName: string): string => {
     }
   }
 
-  // Remove trailing spaces, punctuation or dashes
-  title = title.trim().replace(/[-_~:\s]+$/, "").trim();
+  // Remove trailing/leading spaces, punctuation or dashes
+  title = title.trim().replace(/^[-_~:\s]+/, "").replace(/[-_~:\s]+$/, "").trim();
 
   return title || "대회/훈련 참가";
 };
@@ -294,10 +310,33 @@ const parseOcrFromFilename = (fileName: string, students: any[]): any => {
   const startDate = sortedDetails[0]?.date || `${year}-${String(month).padStart(2, '0')}-01`;
   const endDate = sortedDetails[sortedDetails.length - 1]?.date || `${year}-${String(month).padStart(2, '0')}-31`;
 
-  const student = students[0];
+  // Find matching student by checking if any student name is in the filename (ignoring whitespace)
+  const cleanFileName = fileName.replace(/\s+/g, '');
+  let matchedStudent = students.find(s => {
+    const cleanName = s.name.replace(/\s+/g, '');
+    return cleanFileName.includes(cleanName) || cleanName.includes(cleanFileName);
+  });
+  
+  let studentId = matchedStudent ? matchedStudent.id : '';
+  
+  if (!studentId) {
+    const nameMatch = fileName.match(/([가-힣]{3})/);
+    if (nameMatch) {
+      const parsedName = nameMatch[1];
+      const exists = students.find(s => s.name.replace(/\s+/g, '') === parsedName);
+      if (exists) {
+        studentId = exists.id;
+      }
+    }
+  }
+  
+  if (!studentId) {
+    studentId = students[0]?.id || '';
+  }
+
   const sanitizedName = sanitizeFileName(fileName, students);
 
-  let rawTitle = cleanEventTitle(fileName);
+  let rawTitle = cleanEventTitle(fileName, students);
   rawTitle = rawTitle.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   let title = rawTitle;
   if (!title.includes(`${month}월`)) {
@@ -309,8 +348,8 @@ const parseOcrFromFilename = (fileName: string, students: any[]): any => {
 
   return {
     title,
-    studentId: student?.id || '',
-    type: 'competition',
+    studentId,
+    type: '평일 연습 경기 및 중등리그 참가',
     startDate,
     endDate,
     isExceptionEvent: false,
@@ -956,10 +995,38 @@ export default function App() {
       clearInterval(interval);
       setOcrProgress(100);
       
-      const sanitizedName = sanitizeFileName(file.name, students);
       const parsedData = parseOcrFromFilename(file.name, students);
+      let targetStudentId = parsedData.studentId;
+
+      // Extract 3-char Korean name from filename to see if we can create a temp student
+      const nameMatch = file.name.match(/([가-힣]{3})/);
+      if (nameMatch) {
+        const parsedName = nameMatch[1];
+        const exists = students.find(s => s.name.replace(/\s+/g, '') === parsedName);
+        if (exists) {
+          targetStudentId = exists.id;
+        } else {
+          const newTempStudent = {
+            id: `temp_stud_${Date.now()}`,
+            name: parsedName,
+            sport: '축구',
+            gradeClass: '2학년 2반',
+            number: '99',
+            usedDays: 0,
+            accumulatedHours: 0,
+            runUpStatus: {},
+            isTemporary: true
+          };
+          setStudents(prev => [...prev, newTempStudent]);
+          targetStudentId = newTempStudent.id;
+          showToast(`새로운 학생 선수 '${parsedName}'를 파일명에서 자동 식별하여 추가 등록했습니다.`, "info");
+        }
+      }
+      
+      const sanitizedName = sanitizeFileName(file.name, students);
       const prefilledData = {
         ...parsedData,
+        studentId: targetStudentId,
         uploadedDocName: sanitizedName,
         files: {
           document: sanitizedName,
@@ -1068,13 +1135,40 @@ export default function App() {
         targetType = parsedJson.eventTypeLabel.trim();
       }
 
-      // 4. Map parsed student name to register student ID
-      let matchedStudent = students.find(s => s.name === parsedJson.studentName);
-      if (!matchedStudent && parsedJson.studentName) {
-        matchedStudent = students.find(s => s.name.includes(parsedJson.studentName) || parsedJson.studentName.includes(s.name));
-      }
+      // 4. Map parsed student name to register student ID (ignoring whitespace)
+      let matchedStudent = null;
+      let targetStudentId = '';
       
-      const targetStudentId = matchedStudent ? matchedStudent.id : (students[0]?.id || '');
+      if (parsedJson.studentName) {
+        const cleanParsed = parsedJson.studentName.replace(/\s+/g, '');
+        matchedStudent = students.find(s => {
+          const cleanName = s.name.replace(/\s+/g, '');
+          return cleanName === cleanParsed || cleanName.includes(cleanParsed) || cleanParsed.includes(cleanName);
+        });
+      }
+
+      if (matchedStudent) {
+        targetStudentId = matchedStudent.id;
+      } else if (parsedJson.studentName) {
+        // Automatically create a temporary student option
+        const tempName = parsedJson.studentName.replace(/\s+/g, '');
+        const newTempStudent = {
+          id: `temp_stud_${Date.now()}`,
+          name: parsedJson.studentName.trim(),
+          sport: parsedJson.sport || '축구',
+          gradeClass: '2학년 2반',
+          number: '99',
+          usedDays: 0,
+          accumulatedHours: 0,
+          runUpStatus: {},
+          isTemporary: true
+        };
+        setStudents(prev => [...prev, newTempStudent]);
+        targetStudentId = newTempStudent.id;
+        showToast(`새로운 학생 선수 '${newTempStudent.name}'를 공문에서 자동 식별하여 추가 등록했습니다.`, "info");
+      } else {
+        targetStudentId = students[0]?.id || '';
+      }
       
       // 5. Sanitize and Correct dailyDetails (Preventing 0-hour or 0-period errors)
       const sanitizedDetails = (parsedJson.dailyDetails || []).map((day: any) => {
@@ -3029,7 +3123,48 @@ export default function App() {
                 return `   - ${month}/${day} : ${detailLabel}`;
               }).join('\n');
 
-              const titleEvent = dateDetails[0]?.eventTitle || '학생선수 평일 연습 경기 및 리그 평일 경기 참가';
+              // Group days by eventTitle (Reason)
+              const groupedReasons: { [reason: string]: string[] } = {};
+              dateDetails.forEach(d => {
+                const dateObj = new Date(d.date);
+                const m = dateObj.getMonth() + 1;
+                const dayVal = dateObj.getDate();
+                const dateLabel = `${m}/${dayVal}`;
+                const reason = d.eventTitle || '평일 연습 경기 및 리그 평일 경기 참가';
+                
+                if (!groupedReasons[reason]) {
+                  groupedReasons[reason] = [];
+                }
+                groupedReasons[reason].push(dateLabel);
+              });
+
+              let reasonText = '';
+              const reasonEntries = Object.entries(groupedReasons);
+              if (reasonEntries.length === 1) {
+                reasonText = reasonEntries[0][0];
+              } else {
+                reasonText = '\n' + reasonEntries.map(([reason, dates]) => {
+                  return `   - ${reason} (날짜: ${dates.join(', ')})`;
+                }).join('\n');
+              }
+
+              // Dynamic attachments (붙임) list
+              const uniqueDocs = Array.from(new Set(data.docs || [])) as string[];
+              let attachmentText = '';
+              if (uniqueDocs.length > 0) {
+                const cleanDocs = uniqueDocs.map((docName, idx) => `     ${idx + 1}. ${docName.replace(/\.[^/.]+$/, "")} 1부.`);
+                const reportIdx = cleanDocs.length + 1;
+                const eschoolIdx = cleanDocs.length + 2;
+                
+                attachmentText = `붙임 1. ${uniqueDocs[0].replace(/\.[^/.]+$/, "")} 1부.\n` + 
+                  cleanDocs.slice(1).map(line => line).join('\n') + (cleanDocs.length > 1 ? '\n' : '') +
+                  `     ${reportIdx}. ${draftMonth}월 학생선수활동보고서 1부.\n` +
+                  `     ${eschoolIdx}. ${draftMonth}월 e-school 학습확인서 1부.  끝.`;
+              } else {
+                attachmentText = `붙임 1. ${draftMonth}월 학생선수활동보고서 1부.\n` +
+                  `     2. ${draftMonth}월 e-school 학습확인서 1부.  끝.`;
+              }
+
               const maskedName = maskStudentName(studentDetail.name);
               const draftText = `제목  학생 선수 ${draftMonth}월 출석 인정(${studentDetail.gradeClass} ${studentDetail.number}번 ${maskedName})
 
@@ -3038,13 +3173,10 @@ export default function App() {
 1. 대상 : ${studentDetail.gradeClass} ${studentDetail.number}번 ${maskedName}
 2. 인정기간 및 내역 :
 ${formattedAbsences || '   - 결손 내역 없음'}
-3. 사유 : ${titleEvent}
+3. 사유 : ${reasonText}
 4. 증빙서류 : 학생선수 활동 보고서, e-school 학습확인서 등
 
-붙임 1. LEO FC 평일 연습경기 참가에 따른 시간 할애 협조 요청 건 1부.
-     2. 2026 중등축구리그 평일 경기 참가에 따른 시간 할애 요청 건 1부.
-     3. ${draftMonth}월 학생선수활동보고서 1부.
-     4. ${draftMonth}월 e-school 학습확인서 1부.  끝.`;
+${attachmentText}`;
 
               return (
                 <div className="p-6 space-y-4">
