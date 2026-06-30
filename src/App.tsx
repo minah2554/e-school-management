@@ -749,6 +749,16 @@ export default function App() {
     setSelectedEventToEdit(null);
   };
 
+  const openEditModal = (evt: any) => {
+    setSelectedEventToEdit(evt);
+    setModalTitle(evt.title);
+    setModalStudentId(evt.studentId);
+    setModalType(evt.type);
+    setModalIsException(evt.isExceptionEvent);
+    setModalDailyDetails(evt.dailyDetails || []);
+    setShowAddEventModal(true);
+  };
+
   const handleDeleteEvent = async (eventId: string) => {
     // Rever used days if needed
     const eventToDelete = events.find(e => e.id === eventId);
@@ -1475,7 +1485,7 @@ export default function App() {
               className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-black transition-all ${activeTab === 'students' ? 'bg-white text-indigo-900 shadow-sm' : 'text-indigo-100 hover:text-white'}`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>학생명부 ({totalStudents})</span>
+              <span>학생 명단 ({totalStudents})</span>
             </button>
             <button 
               onClick={() => setActiveTab('eschool')} 
@@ -1711,7 +1721,12 @@ export default function App() {
                           </div>
 
                           <button 
-                            onClick={() => setSelectedDateEvents(dayEvents)}
+                            onClick={() => {
+                              setSelectedDateEvents(dayEvents);
+                              if (dayEvents.length > 0) {
+                                openEditModal(dayEvents[0]);
+                              }
+                            }}
                             className="text-[11px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 px-3 py-2 rounded-xl transition self-end sm:self-center cursor-pointer"
                           >
                             일정 선택
@@ -1750,7 +1765,12 @@ export default function App() {
                       return (
                         <button 
                           key={dayNum} 
-                          onClick={() => setSelectedDateEvents(dayEvents)}
+                          onClick={() => {
+                            setSelectedDateEvents(dayEvents);
+                            if (dayEvents.length > 0) {
+                              openEditModal(dayEvents[0]);
+                            }
+                          }}
                           className={`h-24 p-1.5 rounded-xl border flex flex-col text-left transition relative group cursor-pointer ${
                             isCurrent 
                               ? 'border-indigo-600 bg-indigo-50/20 ring-2 ring-indigo-600/10' 
@@ -1772,7 +1792,11 @@ export default function App() {
                               return (
                                 <div 
                                   key={evt.id} 
-                                  className="bg-rose-50 text-rose-700 border border-rose-200 px-1 py-0.5 rounded text-[8.5px] font-black truncate w-full flex items-center justify-between gap-1 leading-none shadow-sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEditModal(evt);
+                                  }}
+                                  className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-1 py-0.5 rounded text-[8.5px] font-black truncate w-full flex items-center justify-between gap-1 leading-none shadow-sm cursor-pointer"
                                 >
                                   <span className="truncate shrink-0 max-w-[65%]">{student ? maskStudentName(student.name) : '학생'}</span>
                                   <span className="text-rose-600 bg-white/70 px-0.5 rounded text-[8px] font-black">
