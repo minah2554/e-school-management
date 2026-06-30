@@ -27,3 +27,6 @@ dist
 # Firebase cache
 .firebase/
 
+
+.vercel
+.env*
