@@ -29,19 +29,82 @@ export default defineConfig(({ mode }) => {
                     return;
                   }
 
-                  const parts: any[] = [
-                    {
-                      text: parsedBody.prompt
-                    }
-                  ];
+                  let textContent = '';
+                  let isHwpx = false;
 
-                  if (parsedBody.fileData && parsedBody.fileData.base64 && parsedBody.fileData.mimeType) {
-                    parts.push({
-                      inlineData: {
-                        mimeType: parsedBody.fileData.mimeType,
-                        data: parsedBody.fileData.base64
+                  if (parsedBody.fileData && parsedBody.fileData.base64) {
+                    if (parsedBody.fileData.base64.startsWith('UEsDB')) {
+                      isHwpx = true;
+                    }
+                  }
+
+                  if (isHwpx) {
+                    try {
+                      const zlib = require('zlib');
+                      const zipBuffer = Buffer.from(parsedBody.fileData.base64, 'base64');
+                      let offset = 0;
+                      let sectionsText = [];
+
+                      while (offset < zipBuffer.length) {
+                        if (offset + 30 > zipBuffer.length) break;
+                        const signature = zipBuffer.readUInt32LE(offset);
+                        if (signature !== 0x04034b50) {
+                          break; 
+                        }
+                        const compressionMethod = zipBuffer.readUInt16LE(offset + 8);
+                        const compressedSize = zipBuffer.readUInt32LE(offset + 18);
+                        const fileNameLength = zipBuffer.readUInt16LE(offset + 26);
+                        const extraFieldLength = zipBuffer.readUInt16LE(offset + 28);
+                        
+                        if (offset + 30 + fileNameLength > zipBuffer.length) break;
+                        const fileName = zipBuffer.toString('utf8', offset + 30, offset + 30 + fileNameLength);
+                        const dataOffset = offset + 30 + fileNameLength + extraFieldLength;
+                        
+                        if (fileName.startsWith('Contents/section') && fileName.endsWith('.xml')) {
+                          if (dataOffset + compressedSize > zipBuffer.length) break;
+                          const compressedData = zipBuffer.slice(dataOffset, dataOffset + compressedSize);
+                          let xmlContent = '';
+                          if (compressionMethod === 8) {
+                            xmlContent = zlib.inflateRawSync(compressedData).toString('utf8');
+                          } else if (compressionMethod === 0) {
+                            xmlContent = compressedData.toString('utf8');
+                          }
+                          
+                          const matches = xmlContent.match(/<hp:t[^>]*>([\s\S]*?)<\/hp:t>/g);
+                          if (matches) {
+                            const secText = matches.map(m => m.replace(/<[^>]+>/g, '')).join(' ');
+                            sectionsText.push(secText);
+                          }
+                        }
+                        
+                        offset = dataOffset + compressedSize;
                       }
+
+                      if (sectionsText.length > 0) {
+                        textContent = sectionsText.join('\n\n');
+                      }
+                    } catch (zipErr) {
+                      console.error('Failed to parse HWPX zip streams:', zipErr);
+                    }
+                  }
+
+                  const parts: any[] = [];
+                  if (textContent) {
+                    parts.push({
+                      text: `다음은 공문(HWPX)에서 추출한 텍스트 내용이다:\n\n${textContent}\n\n위 텍스트 정보를 바탕으로 아래 프롬프트에 답하라.\n\n${parsedBody.prompt}`
                     });
+                  } else {
+                    parts.push({
+                      text: parsedBody.prompt
+                    });
+                    if (parsedBody.fileData && parsedBody.fileData.base64 && parsedBody.fileData.mimeType) {
+                      parts.push({
+                        inlineData: {
+                          mimeType: parsedBody.fileData.mimeType,
+                          data: parsedBody.fileData.base64
+                        }
+                      });
+                    }
                   }
 
                   const response = await fetch(

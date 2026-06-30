@@ -927,8 +927,9 @@ export default function App() {
       }, 300);
     };
 
-    if (!isImageOrPdf) {
-      // For non-image/pdf documents (e.g. .hwp, .docx), trigger immediately name-based parsing
+    const isHwpx = file.name.endsWith('.hwpx');
+    if (!isImageOrPdf && !isHwpx) {
+      // For other non-image/pdf/hwpx documents (e.g. .hwp, .docx), trigger immediately name-based parsing
       runFallback();
       return;
     }
@@ -941,7 +942,7 @@ export default function App() {
           const result = reader.result as string;
           const commaIdx = result.indexOf(',');
           const base64 = result.substring(commaIdx + 1);
-          const mimeType = file.type || 'application/pdf';
+          const mimeType = file.name.endsWith('.hwpx') ? 'application/zip' : (file.type || 'application/pdf');
           resolve({ base64, mimeType });
         };
         reader.onerror = (err) => reject(err);
