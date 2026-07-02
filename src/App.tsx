@@ -1171,23 +1171,72 @@ export default function App() {
   ]
 }`;
 
-      // 3. Dispatch POST request to serverless endpoint
-      const res = await fetch('/api/gemini-counseling', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ prompt, fileData: { base64, mimeType } })
-      });
+      let parsedJson: any = null;
+      let apiSuccess = false;
 
-      if (!res.ok) {
-        throw new Error('API server error');
+      try {
+        // Try calling local/Vercel backend first
+        const res = await fetch('/api/gemini-counseling', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ prompt, fileData: { base64, mimeType } })
+        });
+
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const result = await res.json();
+            const rawText = result.text || '';
+            parsedJson = extractJsonFromText(rawText);
+            apiSuccess = true;
+          }
+        }
+      } catch (backendErr) {
+        console.warn("Backend API unavailable, attempting client-side fallback:", backendErr);
       }
 
-      const result = await res.json();
-      const rawText = result.text || '';
-      
-      const parsedJson = extractJsonFromText(rawText);
+      // Client-side fallback if backend fails (e.g. on static Firebase Hosting)
+      if (!apiSuccess) {
+        const clientApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+        if (clientApiKey) {
+          const parts: any[] = [{ text: prompt }];
+          if (base64 && mimeType) {
+            parts.push({
+              inlineData: {
+                mimeType: mimeType,
+                data: base64
+              }
+            });
+          }
+
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${clientApiKey}`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                contents: [{ parts }]
+              })
+            }
+          );
+
+          if (response.ok) {
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            parsedJson = extractJsonFromText(text);
+            apiSuccess = true;
+          } else {
+            const errBody = await response.text();
+            throw new Error(`Client-side Gemini API failed: ${errBody}`);
+          }
+        } else {
+          throw new Error('No available API endpoint or client-side Gemini API key found.');
+        }
+      }
       
       // Assign targetType directly to the parsed label
       let targetType = '평일 연습 경기 및 중등리그 참가';
@@ -1731,13 +1780,16 @@ export default function App() {
               <p className="text-[11px] text-indigo-200 mb-3">공문서 이미지/PDF를 올리면 일정을 자동 분류합니다.</p>
               
               {/* Optional Prompt/Hint Input Box */}
-              <div className="mb-3">
+              <div className="mb-3 space-y-1">
+                <label className="text-[10px] text-indigo-200 font-medium block">
+                  💡 인식 오류 시 보정용 힌트 (선택사항)
+                </label>
                 <input 
                   type="text" 
                   value={ocrHint}
                   onChange={(e) => setOcrHint(e.target.value)}
-                  placeholder="💡 분석 힌트 입력 (예: 학생명 김진우, 7/2~7/5 결석)" 
-                  className="w-full bg-white/10 hover:bg-white/15 border border-white/20 rounded-xl px-3 py-2 text-xs text-white placeholder-indigo-300 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition"
+                  placeholder="예: 학생 김진우, 5/12~15 결석" 
+                  className="w-full bg-white/10 hover:bg-white/15 border border-white/20 rounded-xl px-3 py-2 text-xs text-white placeholder-indigo-300/60 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition"
                 />
               </div>
 
