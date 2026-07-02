@@ -467,6 +467,7 @@ export default function App() {
   const [ocrScanning, setOcrScanning] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrPrefilled, setOcrPrefilled] = useState<any>(null);
+  const [ocrHint, setOcrHint] = useState('');
 
   // Dynamic daily details inside schedule creator
   const [modalDailyDetails, setModalDailyDetails] = useState<any[]>([]);
@@ -970,7 +971,7 @@ export default function App() {
   };
 
   // --- Smart OCR Document Parser via Gemini Multimodal API ---
-  const triggerOcrSimulation = async (file: File) => {
+  const triggerOcrSimulation = async (file: File, userHint?: string) => {
     if (!file) return;
 
     // Check duplicate document based on raw and sanitized name comparison
@@ -1097,10 +1098,17 @@ export default function App() {
       const { base64, mimeType } = await fileDataPromise;
 
       // 2. Build detailed prompt for Gemini to structure JSON output
-      const prompt = `너는 학교 행정 및 출석 인정 공문서 분석 전문가이다.
+      const studentNamesList = students.map(s => s.name).join(', ');
+      let prompt = `너는 학교 행정 및 출석 인정 공문서 분석 전문가이다.
 다음 첨부된 공문(대회/훈련 협조요청 공문서 또는 관련 기안서/보고서)을 정밀 스캔하여 아래의 정보들을 아주 상세하고 정확하게 추출해줘. 
 다양한 형태의 한국 공문서 서식을 인식해야 하며, 양식이 다르더라도 최상의 정확도로 아래의 정보를 뽑아내야 한다.
 
+[매우 중요 - 현재 등록된 학생 선수 명단]
+- 현재 등록된 학생 이름 목록: [ ${studentNamesList} ]
+- 공문 내에서 학생 이름을 찾을 때, 이 목록에 포함된 이름이 공문에 등장한다면 그 이름을 가장 최우선적으로 매치시켜 studentName으로 추출하시오. (예: '김진우'가 명단에 있고 공문에 '김진우' 또는 '김 진 우'가 적혀있다면 '김진우'를 추출)
+- 교사, 교장, 교감, 기안자, 수신자, 감독, 코치 등 '학생 선수'가 아닌 이름은 절대 studentName으로 추출하지 마십시오.
+
+[추출 항목 및 세부 규칙]
 1. 대회 또는 훈련에 참가한 학생 선수 이름 (studentName)
    - 문서 본문, 수신처, 또는 첨부 문서의 테이블(명단)에서 학생 이름을 정확히 찾으시오.
    - 이름 사이에 공백이 있는 경우(예: '김 현 우' 또는 '홍 길 동') 공백을 완전히 제외한 순수 이름(예: '김진우', '홍길동')으로 합쳐서 추출하시오.
@@ -1138,9 +1146,15 @@ export default function App() {
    - 조퇴:
      * 공문에 특정 교시 이후 조퇴나 시간 할애 등이 명시된 경우(예: '4교시 후 조퇴', '13:00 이후(4교시 후)', '5교시부터 조퇴'), attendanceType은 '조퇴'로 하고, periodInfo는 'N교시 조퇴' (예: '4교시 조퇴')로 기록하며, missingHours는 [총 수업 시수 - N]교시만큼을 계산하시오. (단, 조퇴 교시 정보만 적어두면 아래 시스템에서 시수를 자동 보정하므로, periodInfo에 'N교시 조퇴'를 정확히 기입하는 것이 가장 중요합니다.)
    - 지각:
-     * 특정 교시 지각 시 attendanceType은 '지각', periodInfo는 'N교시 지각', missingHours는 1로 설정하시오.
+     * 특정 교시 지각 시 attendanceType은 '지각', periodInfo는 'N교시 지각', missingHours는 1로 설정하시오.`;
 
-반드시 다른 군더더기 설명이나 마크다운 코드블록(\`\`\`json) 기호 등도 포함하지 말고, 오직 아래의 JSON 포맷 텍스트 하나만 출력하시오:
+      if (userHint) {
+        prompt += `\n\n[사용자 추가 힌트 (가장 우선 반영)]
+- 사용자가 직접 입력한 힌트: "${userHint}"
+- 만약 사용자가 적어준 힌트에 학생 이름이나 날짜 범위, 유형 정보가 있다면, 공문서 내용보다 이 힌트를 최우선 조건으로 반영하여 최종 JSON 데이터를 뽑아내시오.`;
+      }
+
+      prompt += `\n\n반드시 다른 군더더기 설명이나 마크다운 코드블록(\`\`\`json) 기호 등도 포함하지 말고, 오직 아래의 JSON 포맷 텍스트 하나만 출력하시오:
 
 {
   "studentName": "학생 이름",
@@ -1714,18 +1728,33 @@ export default function App() {
           <div className="bg-gradient-to-br from-indigo-900 to-purple-950 p-5 rounded-2xl shadow-lg text-white">
             <div className="w-full">
               <span className="text-xs text-indigo-200 font-bold block mb-1">공문 간편 드래그 업로드</span>
-              <p className="text-[11px] text-indigo-200 mb-2">공문서 이미지/PDF를 올리면 일정을 자동 분류합니다.</p>
+              <p className="text-[11px] text-indigo-200 mb-3">공문서 이미지/PDF를 올리면 일정을 자동 분류합니다.</p>
               
+              {/* Optional Prompt/Hint Input Box */}
+              <div className="mb-3">
+                <input 
+                  type="text" 
+                  value={ocrHint}
+                  onChange={(e) => setOcrHint(e.target.value)}
+                  placeholder="💡 분석 힌트 입력 (예: 학생명 김진우, 7/2~7/5 결석)" 
+                  className="w-full bg-white/10 hover:bg-white/15 border border-white/20 rounded-xl px-3 py-2 text-xs text-white placeholder-indigo-300 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 transition"
+                />
+              </div>
+
               <label className="bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-xl px-3 py-1.5 cursor-pointer text-xs font-bold transition flex items-center justify-center gap-1.5 w-full">
                 <UploadCloud className="w-4 h-4" />
-                <span>공문 업로드 (김진우 예시)</span>
+                <span>공문 업로드 및 분석 시작</span>
                 <input 
                   type="file" 
                   accept=".pdf,image/*,.hwp,.docx" 
                   className="hidden" 
                   onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (file) triggerOcrSimulation(file);
+                    if (file) {
+                      triggerOcrSimulation(file, ocrHint);
+                      // Clear hint after upload
+                      setOcrHint('');
+                    }
                     e.target.value = ''; // Reset value to allow re-uploading the same file
                   }}
                 />
